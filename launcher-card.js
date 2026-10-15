@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.2";
+const CARD_VERSION = "0.2.3";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -65,8 +65,46 @@ const DEFAULTS = {
   press_animation: "shrink",
   name_shadow: false,
   name_shadow_blur: 3,
+  name_gap: 7,
+  marquee_speed: 30,
+  gradient_type: "linear",
+  badge_border: 0,
+  card_padding: 16,
+  sort: "none",
+  appear_animation: "rise",
+  appear_order: "sequence",
+  appear_trigger: "load",
+  appear_duration: 450,
+  appear_stagger: 35,
   haptic: true,
   card_background: true,
+};
+
+const APPEAR_ANIMATIONS = {
+  none: "None",
+  fade: "Fade",
+  rise: "Rise",
+  drop: "Drop in",
+  slide: "Slide in",
+  pop: "Pop",
+  zoom: "Zoom out",
+  bounce: "Bounce",
+  flip: "Flip (3D)",
+  swirl: "Swirl",
+  blur: "Blur in",
+};
+const APPEAR_ORDERS = { sequence: "One by one", reverse: "Reverse", rows: "Row by row", diagonal: "Diagonal wave", center: "From center", random: "Random" };
+
+const APPEAR_FROM = {
+  fade: "opacity:0;",
+  rise: "opacity:0; transform:translateY(18px);",
+  drop: "opacity:0; transform:translateY(-18px);",
+  slide: "opacity:0; transform:translateX(-24px);",
+  pop: "opacity:0; transform:scale(.3);",
+  zoom: "opacity:0; transform:scale(1.5);",
+  flip: "opacity:0; transform:perspective(500px) rotateX(-80deg);",
+  swirl: "opacity:0; transform:rotate(-120deg) scale(.2);",
+  blur: "opacity:0; filter:blur(10px); transform:scale(1.08);",
 };
 
 const INACTIVE_STATES = ["off", "unavailable", "unknown", "idle", "closed", "not_home", "standby", "none", "0", ""];
@@ -124,11 +162,12 @@ function extractColors(src) {
   return p;
 }
 
-const css = (v) => (Array.isArray(v) ? `rgb(${v.slice(0, 3).join(",")})` : v);
+const safe = (v) => String(v).replace(/[;{}<>\\]/g, "");
+const css = (v) => (Array.isArray(v) ? `rgb(${v.slice(0, 3).map(Number).join(",")})` : v ? safe(v) : v);
 
 function appColors(app) {
   const preset = PRESETS[app.badge_color] || PRESETS[app.color];
-  if (preset) return preset;
+  if (preset) return app.color2 ? [preset[0], css(app.color2)] : preset;
   const c1 = css(app.color || app.badge_color);
   if (c1) return [c1, css(app.color2) || c1];
   return null;
@@ -166,21 +205,25 @@ function hsvToRgb(h, s, v) {
 }
 
 const normalize = (s) => String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+const num = (v, d) => (v === undefined || v === null || v === "" || isNaN(Number(v)) ? d : Number(v));
 
-const SEARCH_CARDS = new Set();
-window.addEventListener(
-  "keydown",
-  (e) => {
-    if (!SEARCH_CARDS.size || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
-    if (e.key.length !== 1 || e.key === " ") return;
-    const busy = e.composedPath().some(
-      (n) => n.nodeType === 1 && (/^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName) || n.isContentEditable || n.tagName.includes("DIALOG"))
-    );
-    if (busy) return;
-    for (const card of SEARCH_CARDS) if (card._captureKey(e)) return;
-  },
-  true
-);
+const SEARCH_CARDS = (window.__launcherCardSearch = window.__launcherCardSearch || new Set());
+if (!window.__launcherCardKeys) {
+  window.__launcherCardKeys = true;
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (!SEARCH_CARDS.size || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      if (e.key.length !== 1 || e.key === " ") return;
+      const busy = e.composedPath().some(
+        (n) => n.nodeType === 1 && (/^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName) || n.isContentEditable || n.tagName.includes("DIALOG"))
+      );
+      if (busy) return;
+      for (const card of SEARCH_CARDS) if (card._captureKey(e)) return;
+    },
+    true
+  );
+}
 
 class LauncherCard extends HTMLElement {
   static getStubConfig() {
@@ -210,18 +253,134 @@ class LauncherCard extends HTMLElement {
     if (c.press_animation === true) c.press_animation = "shrink";
     if (c.press_animation === false) c.press_animation = "none";
     this._config = c;
+    const appearKey = ["appear_animation", "appear_order", "appear_trigger", "appear_duration", "appear_stagger"].map((k) => c[k]).join("|");
+    if (appearKey !== this._appearKey) {
+      this._appearKey = appearKey;
+      this._played = false;
+    }
     this._render();
   }
 
   connectedCallback() {
-    if (!this._ro) this._ro = new ResizeObserver(() => this._layout());
+    if (!this._ro) {
+      this._ro = new ResizeObserver((entries) => {
+        const w = Math.round(entries[entries.length - 1].contentRect.width);
+        if (w === this._lastWidth) return;
+        this._lastWidth = w;
+        this._layout();
+      });
+    }
     this._ro.observe(this);
     this._registerTyping();
+    if (!this._onReplay) {
+      this._onReplay = () => {
+        this._played = false;
+        this._maybeAppear();
+      };
+    }
+    window.addEventListener("launcher-card-replay", this._onReplay);
+    this._played = false;
+    this._maybeAppear();
   }
 
   disconnectedCallback() {
     if (this._ro) this._ro.disconnect();
+    if (this._io) this._io.disconnect();
+    this._io = null;
+    clearTimeout(this._appearTimer);
+    window.removeEventListener("launcher-card-replay", this._onReplay);
     SEARCH_CARDS.delete(this);
+  }
+
+
+  _maybeAppear() {
+    const c = this._config;
+    const card = this.shadowRoot && this.shadowRoot.querySelector("ha-card");
+    if (!c || !card || this._played || !this.isConnected) return;
+    const reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!this._appearType() || reduced) {
+      this._played = true;
+      return;
+    }
+    clearTimeout(this._appearTimer);
+    card.classList.remove("appear");
+    card.classList.add("pre");
+    if (this._io) this._io.disconnect();
+    if (c.appear_trigger === "visible" && "IntersectionObserver" in window) {
+      this._io = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((e) => e.isIntersecting)) return;
+          this._io.disconnect();
+          this._io = null;
+          this._startAppear();
+        },
+        { threshold: 0.15 }
+      );
+      this._io.observe(this);
+    } else {
+      requestAnimationFrame(() => this._startAppear());
+    }
+  }
+
+  _startAppear() {
+    const card = this.shadowRoot && this.shadowRoot.querySelector("ha-card");
+    if (!card || !this._els) return;
+    this._played = true;
+    const c = this._config;
+    const ranks = this._appearRanks(this._els.map((x) => x.el));
+    this._els.forEach((x, i) => x.el.style.setProperty("--i", ranks[i]));
+    card.classList.remove("pre");
+    void card.offsetWidth;
+    card.classList.add("appear");
+    const total = num(c.appear_duration, 450) + num(c.appear_stagger, 35) * Math.max(0, ...ranks) + 100;
+    this._appearTimer = setTimeout(() => card.classList.remove("appear"), total);
+  }
+
+  _appearType() {
+    const t = this._config.appear_animation;
+    return t && t !== "none" && APPEAR_ANIMATIONS[t] ? t : null;
+  }
+
+  _appearStyles() {
+    const c = this._config;
+    const t = this._appearType();
+    if (!t) return "";
+    const dur = num(c.appear_duration, 450), stagger = num(c.appear_stagger, 35);
+    const ease = t === "pop" ? "cubic-bezier(.2,1.5,.4,1)" : "cubic-bezier(.2,.8,.2,1)";
+    const frames = t === "bounce"
+      ? `0% { opacity:0; transform:translateY(32px); } 55% { opacity:1; transform:translateY(-7px); }
+         75% { transform:translateY(3px); } 100% { transform:none; }`
+      : `from { ${APPEAR_FROM[t]} }`;
+    return `
+      .pre .app, .pre .title, .pre .search { opacity:0; }
+      .appear .app { animation:lc-in ${dur}ms ${ease} both; animation-delay:calc(var(--i, 0) * ${stagger}ms); }
+      .appear .title, .appear .search { animation:lc-in-fade ${dur}ms ease both; }
+      @keyframes lc-in { ${frames} }
+      @keyframes lc-in-fade { from { opacity:0; transform:translateY(-6px); } }`;
+  }
+
+  _appearRanks(els) {
+    const order = this._config.appear_order;
+    const n = els.length;
+    if (order === "reverse") return els.map((_, i) => n - 1 - i);
+    if (order === "random") {
+      const r = els.map((_, i) => i);
+      for (let i = n - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [r[i], r[j]] = [r[j], r[i]];
+      }
+      return r;
+    }
+    if (order === "rows" || order === "diagonal" || order === "center") {
+      const tops = [...new Set(els.map((e) => e.offsetTop))].sort((a, b) => a - b);
+      const lefts = [...new Set(els.map((e) => e.offsetLeft))].sort((a, b) => a - b);
+      const pos = els.map((e) => [lefts.indexOf(e.offsetLeft), tops.indexOf(e.offsetTop)]);
+      if (order === "rows") return pos.map(([, y]) => y);
+      if (order === "diagonal") return pos.map(([x, y]) => x + y);
+      const cx = (lefts.length - 1) / 2, cy = (tops.length - 1) / 2;
+      return pos.map(([x, y]) => Math.round(Math.hypot(x - cx, y - cy)));
+    }
+    return els.map((_, i) => i);
   }
 
   _registerTyping() {
@@ -250,6 +409,12 @@ class LauncherCard extends HTMLElement {
       } else if (e.key === "Enter") {
         const first = this._els.find((x) => !x.el.classList.contains("filtered"));
         if (first && this._query) this._act(first.app, "tap");
+      } else if (e.key === "ArrowDown") {
+        const first = this._els.find((x) => !x.el.classList.contains("filtered"));
+        if (first) {
+          e.preventDefault();
+          first.el.focus();
+        }
       }
     });
     bar.querySelector(".clear").addEventListener("click", (e) => {
@@ -301,12 +466,14 @@ class LauncherCard extends HTMLElement {
     const nameSize = Number(c.name_size) || 12;
     const lineH = Math.ceil(nameSize * 1.25);
     const nameLines = c.show_names ? (c.name_overflow === "wrap" ? 2 : 1) : 0;
-    const labelGap = nameLines ? 7 : 0;
+    const labelGap = nameLines ? Math.max(0, num(c.name_gap, 7)) : 0;
     const cellH = badge + labelGap + nameLines * lineH;
     const scaled = (f) => Math.round(badge * (Number(c.icon_scale) || f));
-    const icon = Number(c.icon_size) || (c.badge_style === "minimal" ? scaled(0.8) : scaled(0.55));
+    const icon = Number(c.icon_size) || scaled(0.55);
+    const minimalIcon = Number(c.icon_size) || scaled(0.8);
     const image = Number(c.icon_size) || Math.round(badge * (Number(c.image_scale) || 0.62));
-    return { badge, lineH, labelGap, cellH, icon, image, gap: Math.max(0, Number(c.gap) || 0) };
+    const pad = Math.max(0, num(c.card_padding, 16));
+    return { badge, lineH, labelGap, cellH, icon, minimalIcon, image, pad, gap: Math.max(0, num(c.gap, 18)) };
   }
 
   _layout() {
@@ -317,21 +484,28 @@ class LauncherCard extends HTMLElement {
     const cols = this._fixedCols();
     if (cols) {
       const pitch = grid.clientWidth / cols;
-      grid.style.rowGap = `${Math.max(4, Math.round(pitch - m.cellH))}px`;
+      const gap = `${Math.max(4, Math.round(pitch - m.cellH))}px`;
+      if (grid.style.rowGap !== gap) grid.style.rowGap = gap;
     }
     if (this._config.name_overflow !== "scroll") return;
-    this.shadowRoot.querySelectorAll(".name").forEach((n) => {
-      const track = n.firstElementChild;
-      const text = track.firstElementChild;
-      n.classList.remove("marquee");
-      const over = text.scrollWidth - n.clientWidth;
-      if (over > 1) {
-        n.classList.add("marquee");
-        const dist = text.offsetWidth + 24;
-        track.style.setProperty("--dist", `${dist}px`);
-        track.style.setProperty("--dur", `${Math.max(4, dist / 30 + 2)}s`);
-      }
+    const speed = Math.max(5, num(this._config.marquee_speed, 30));
+    const names = [...this.shadowRoot.querySelectorAll(".app:not(.filtered) .name")];
+    const measured = names.map((n) => {
+      const text = n.firstElementChild.firstElementChild;
+      return [n, text.offsetWidth, n.clientWidth];
     });
+    for (const [n, textW, boxW] of measured) {
+      const over = textW - boxW > 1;
+      const track = n.firstElementChild;
+      const dist = `${textW + 24}px`;
+      if (over && (!n.classList.contains("marquee") || track.style.getPropertyValue("--dist") !== dist)) {
+        track.style.setProperty("--dist", dist);
+        track.style.setProperty("--dur", `${Math.max(4, (textW + 24) / speed + 2).toFixed(2)}s`);
+        n.classList.add("marquee");
+      } else if (!over && n.classList.contains("marquee")) {
+        n.classList.remove("marquee");
+      }
+    }
   }
 
   _fixedCols() {
@@ -361,7 +535,7 @@ class LauncherCard extends HTMLElement {
     if (r === "theme" || r === undefined || r === null || r === "") return "var(--ha-card-border-radius, 12px)";
     if (r === "circle") return "50%";
     if (typeof r === "number") return `${r}px`;
-    return /^\d+(\.\d+)?$/.test(String(r)) ? `${r}px` : String(r);
+    return /^\d+(\.\d+)?$/.test(String(r)) ? `${r}px` : safe(r);
   }
 
   _visible(app) {
@@ -386,14 +560,23 @@ class LauncherCard extends HTMLElement {
     const outer = c.shadow
       ? "0 6px 14px -5px color-mix(in srgb, var(--c2) 65%, rgba(0,0,0,.55)), 0 2px 4px rgba(0,0,0,.18)"
       : "0 0 #0000";
+    const pad = m.pad;
+    const grad = {
+      radial: "radial-gradient(circle at 30% 22%, var(--c1), var(--c2) 85%)",
+      conic: "conic-gradient(from var(--ang) at 50% 50%, var(--c1), var(--c2), var(--c1))",
+      diamond: "linear-gradient(var(--ang), var(--c1) 0%, var(--c2) 50%, var(--c1) 100%)",
+    }[c.gradient_type] || "linear-gradient(var(--ang), var(--c1), var(--c2))";
+    const border = Math.max(0, num(c.badge_border, 0));
 
     return `
       :host { display:block; }
       ha-card { ${c.card_background ? "" : "background:none;box-shadow:none;border:none;"} overflow:hidden; }
-      .title { padding:16px 16px 0; font-size:var(--ha-card-header-font-size, 20px); font-weight:500; color:var(--primary-text-color); }
-      .grid { display:grid; ${grid} margin:16px; justify-items:center; justify-content:${justify};
+      .title { padding:${pad}px ${pad}px 0; font-size:${c.title_size ? `${num(c.title_size, 20)}px` : "var(--ha-card-header-font-size, 20px)"};
+               font-weight:500; text-align:${{ start: "left", center: "center", end: "right" }[c.title_align] || "left"};
+               color:${css(c.title_color) || "var(--primary-text-color)"}; }
+      .grid { display:grid; ${grid} margin:${pad}px; justify-items:center; justify-content:${justify};
               ${c.icon_color ? `--glob-ic:${css(c.icon_color)};` : ""} }
-      .search { margin:16px 16px 0; display:flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 12px; box-sizing:border-box;
+      .search { margin:${pad}px ${pad}px 0; display:flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 12px; box-sizing:border-box;
                 border-radius:20px; color:var(--secondary-text-color); --mdc-icon-size:20px; cursor:text;
                 background:color-mix(in srgb, var(--primary-text-color) 7%, transparent);
                 box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--primary-text-color) 8%, transparent);
@@ -409,7 +592,7 @@ class LauncherCard extends HTMLElement {
       .search.has .clear { display:flex; }
       .app.filtered { display:none; }
       .searching .app.first .badge { outline:2px solid color-mix(in srgb, var(--primary-color) 70%, transparent); outline-offset:3px; }
-      .empty { text-align:center; color:var(--secondary-text-color); font-size:14px; margin:-4px 16px 16px; }
+      .empty { text-align:center; color:var(--secondary-text-color); font-size:14px; margin:-4px ${pad}px ${pad}px; }
       .empty[hidden] { display:none; }
       .app { display:flex; flex-direction:column; align-items:center; gap:${m.labelGap}px; width:100%; min-width:0;
              cursor:pointer; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
@@ -417,13 +600,13 @@ class LauncherCard extends HTMLElement {
       .wrap { position:relative; flex:none; }
       .badge { --ang:${Number(c.gradient_angle)}deg; --ic:#fff; --outer:${outer}; --ish:${ICON_SHADOWS[c.icon_shadow] || ICON_SHADOWS.soft};
                position:relative; width:${size}px; height:${size}px; border-radius:${this._radius()};
-               display:flex; align-items:center; justify-content:center; overflow:hidden;
-               transition:transform .18s cubic-bezier(.3,.7,.4,1.4), filter .18s ease, opacity .2s ease;
-               box-shadow:var(--outer); }
+               display:flex; align-items:center; justify-content:center; overflow:hidden; box-sizing:border-box;
+               --grad:${grad}; box-shadow:var(--outer);
+               ${border ? `border:${border}px solid ${css(c.badge_border_color) || "rgba(255,255,255,.35)"};` : ""} }
       .badge::after { content:""; position:absolute; inset:0; pointer-events:none; border-radius:inherit; }
 
       /* ---- badge styles ---- */
-      .s-gradient { background:linear-gradient(var(--ang), var(--c1), var(--c2));
+      .s-gradient { background:var(--grad);
                     box-shadow:var(--outer), inset 0 0 0 1px rgba(255,255,255,.12); }
       .s-aurora { background:
                     radial-gradient(120% 90% at 12% 8%, color-mix(in srgb, var(--c1) 55%, #fff) 0%, transparent 55%),
@@ -448,7 +631,8 @@ class LauncherCard extends HTMLElement {
       .s-neon ha-icon { filter:var(--ish) drop-shadow(0 0 2px color-mix(in srgb, currentColor 45%, #000))
                                          drop-shadow(0 0 7px color-mix(in srgb, currentColor 55%, #000)); }
       .s-flat { background:var(--c1); }
-      .s-minimal { --ic:var(--c1); background:none; box-shadow:none; overflow:visible; }
+      .s-minimal { --ic:var(--c1); background:none; box-shadow:none; overflow:visible; border-color:transparent; }
+      .s-minimal ha-icon { --mdc-icon-size:${m.minimalIcon}px; }
 
       /* ---- liquid glass ---- */
       .badge::before { position:absolute; inset:0; pointer-events:none; border-radius:inherit; }
@@ -505,6 +689,7 @@ class LauncherCard extends HTMLElement {
 
       .app:focus-visible .badge { outline:2px solid var(--primary-color); outline-offset:3px; }
       ${this._animStyles()}
+      ${this._appearStyles()}
 
       ha-icon { --mdc-icon-size:${m.icon}px; display:flex; position:relative; z-index:1;
                 color:var(--app-ic, var(--glob-ic, var(--ic))); filter:var(--ish); }
@@ -521,12 +706,14 @@ class LauncherCard extends HTMLElement {
       @keyframes pop { from { transform:scale(0); } to { transform:scale(1); } }
 
       .indicator { position:absolute; left:50%; bottom:-6px; width:4px; height:4px; margin-left:-2px; border-radius:50%;
-                   background:var(--primary-text-color); opacity:0; transition:opacity .2s ease; }
-      .app.active .indicator { opacity:.7; }
+                   background:${css(c.indicator_color) || "var(--primary-text-color)"}; opacity:0; transition:opacity .2s ease; }
+      .app.active .indicator { opacity:${c.indicator_color ? 1 : 0.7}; }
       .app.unavail .badge { filter:grayscale(1); opacity:.45; }
 
       .name { font-size:${Number(c.name_size) || 12}px; line-height:${m.lineH}px; height:${m.lineH * (c.name_overflow === "wrap" ? 2 : 1)}px;
-              width:100%; text-align:center; overflow:hidden; color:${css(c.name_color) || "var(--primary-text-color)"}; }
+              width:100%; text-align:center; overflow:hidden; color:${css(c.name_color) || "var(--primary-text-color)"};
+              ${c.name_weight ? `font-weight:${num(c.name_weight, 400)};` : ""}
+              ${["uppercase", "lowercase", "capitalize"].includes(c.name_transform) ? `text-transform:${c.name_transform}; letter-spacing:.02em;` : ""} }
       ${c.name_shadow ? `.name { text-shadow:0 1px ${Math.max(0, Number(c.name_shadow_blur) || 0)}px ${css(c.name_shadow_color) || "rgba(0,0,0,.65)"}; }` : ""}
       .track { display:inline-block; max-width:100%; white-space:nowrap; }
       .t { display:inline-block; white-space:nowrap; }
@@ -615,7 +802,10 @@ class LauncherCard extends HTMLElement {
     const style = BADGE_STYLES[c.badge_style] ? c.badge_style : "gradient";
     this._els = [];
 
-    c.apps.forEach((app) => {
+    const apps = c.sort === "name"
+      ? [...c.apps].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base", numeric: true }))
+      : c.apps;
+    apps.forEach((app) => {
       if (!this._visible(app)) return;
       const el = document.createElement("div");
       el.className = "app";
@@ -627,7 +817,7 @@ class LauncherCard extends HTMLElement {
       const wrap = document.createElement("div");
       wrap.className = "wrap";
       const badge = document.createElement("div");
-      badge.className = `badge s-${style}`;
+      badge.className = `badge s-${BADGE_STYLES[app.badge_style] ? app.badge_style : style}`;
       const colors = appColors(app);
       const setColors = (cc) => {
         el.style.setProperty("--c1", cc[0]);
@@ -658,6 +848,10 @@ class LauncherCard extends HTMLElement {
       const notify = document.createElement("div");
       notify.className = "notify";
       if (app.notify_color) notify.style.setProperty("--notify-color", css(app.notify_color));
+      if (app.notify_text !== undefined && app.notify_text !== "" && !app.notify_entity) {
+        notify.textContent = String(app.notify_text);
+        notify.classList.add("show");
+      }
       wrap.appendChild(notify);
 
       if (c.active_indicator && app.entity) {
@@ -689,17 +883,24 @@ class LauncherCard extends HTMLElement {
     });
 
     this._setupSearch();
-    this._update();
+    this._update(true);
+    this._maybeAppear();
     requestAnimationFrame(() => this._layout());
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this._layout());
   }
 
-  _update() {
+  _update(force) {
     if (!this._hass || !this._els) return;
     const states = this._hass.states;
-    for (const { app, el, notify } of this._els) {
+    for (const item of this._els) {
+      const { app, el, notify } = item;
+      const nst = app.notify_entity ? states[app.notify_entity] : undefined;
+      const est = app.entity ? states[app.entity] : undefined;
+      if (!force && item.nst === nst && item.est === est) continue;
+      item.nst = nst;
+      item.est = est;
       if (app.notify_entity) {
-        const st = states[app.notify_entity];
+        const st = nst;
         const s = st ? String(st.state) : "";
         const n = Number(s);
         let text = null;
@@ -710,7 +911,7 @@ class LauncherCard extends HTMLElement {
         notify.textContent = text || "";
       }
       if (app.entity) {
-        const st = states[app.entity];
+        const st = est;
         const s = st ? String(st.state) : "unavailable";
         el.classList.toggle("active", !INACTIVE_STATES.includes(s) && !(Number(s) === 0 && s.trim() !== "" && !isNaN(Number(s))));
         el.classList.toggle("unavail", this._config.dim_unavailable && (s === "unavailable" || !st));
@@ -785,9 +986,27 @@ class LauncherCard extends HTMLElement {
     el.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
+        tapped();
         this._act(app, "tap");
+      } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) {
+        e.preventDefault();
+        this._moveFocus(el, e.key);
       }
     });
+  }
+
+  _moveFocus(el, key) {
+    const list = this._els.map((x) => x.el).filter((e) => !e.classList.contains("filtered"));
+    const i = list.indexOf(el);
+    if (i < 0) return;
+    const top = list[0].offsetTop;
+    let cols = list.findIndex((e) => e.offsetTop !== top);
+    if (cols < 0) cols = list.length;
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols, Home: -i, End: list.length - 1 - i }[key];
+    const j = i + step;
+    if (j < 0 && key === "ArrowUp" && this._searchInput) return this._searchInput.focus();
+    const target = list[Math.max(0, Math.min(list.length - 1, j))];
+    if (target) target.focus();
   }
 
   _resolve(app, kind) {
@@ -835,19 +1054,25 @@ class LauncherCard extends HTMLElement {
         if (entity) this._fire("hass-more-info", { entityId: entity });
         return;
       case "toggle":
-        if (entity && this._hass) this._hass.callService("homeassistant", "toggle", { entity_id: entity });
+        if (entity && this._hass) this._call("homeassistant", "toggle", { entity_id: entity });
         return;
       case "perform-action":
       case "call-service": {
         const svc = a.perform_action || a.service;
         if (!svc || !this._hass) return;
         const [domain, service] = svc.split(".", 2);
-        this._hass.callService(domain, service, a.data || a.service_data || {}, a.target);
+        this._call(domain, service, a.data || a.service_data || {}, a.target);
         return;
       }
       default:
         this._fire("hass-action", { config: { entity, tap_action: a }, action: "tap" });
     }
+  }
+
+  _call(domain, service, data, target) {
+    Promise.resolve(this._hass.callService(domain, service, data, target)).catch((err) =>
+      this._fire("hass-notification", { message: `Launcher-Card: ${(err && err.message) || err}` })
+    );
   }
 
   _fire(type, detail, target = this) {
@@ -981,6 +1206,14 @@ class LauncherColorPicker extends HTMLElement {
   }
 
   _drawWheel() {
+    if (this._drawRaf) return;
+    this._drawRaf = requestAnimationFrame(() => {
+      this._drawRaf = null;
+      this._renderWheel();
+    });
+  }
+
+  _renderWheel() {
     const v = this._hsv[2];
     if (this._drawnV === v) return;
     this._drawnV = v;
@@ -1031,6 +1264,7 @@ const grid = (...schema) => ({ type: "grid", name: "", schema });
 const schemaKeys = (schema) => schema.flatMap((s) => (s.schema ? schemaKeys(s.schema) : [s.name]));
 
 const HOVER_ANIMATIONS = { none: "None", lift: "Lift", grow: "Grow", tilt: "3D tilt (follows pointer)", glow: "Glow", wiggle: "Wiggle", float: "Float" };
+const NAME_WEIGHTS = [["", "Theme"], ["300", "Light"], ["400", "Regular"], ["500", "Medium"], ["600", "Semibold"], ["700", "Bold"]].map(([value, label]) => ({ value, label }));
 const PRESS_ANIMATIONS = { none: "None", shrink: "Shrink", push: "Push down", spring: "Spring", jelly: "Jelly", ripple: "Ripple" };
 
 const EDITOR_TABS = [
@@ -1050,14 +1284,20 @@ const APP_TABS = [
 
 const GENERAL_SCHEMAS = {
   layout: [
-    { name: "title", label: "Title", selector: { text: {} } },
+    grid(
+      { name: "title", label: "Title", selector: { text: {} } },
+      { name: "title_align", label: "Title alignment", selector: { select: { mode: "dropdown", options: opt({ start: "Left", center: "Center", end: "Right" }) } } },
+      { name: "title_size", label: "Title size (px, empty = theme)", selector: { number: { min: 10, max: 40, mode: "box" } } },
+      { name: "sort", label: "Sort apps", selector: { select: { mode: "dropdown", options: opt({ none: "As configured", name: "By name (A–Z)" }) } } }
+    ),
     grid(
       { name: "columns_mode", label: "Columns", selector: { select: { mode: "dropdown", options: opt({ auto: "Auto-fit", fixed: "Fixed" }) } } },
       { name: "columns_count", label: "Apps per row", selector: { number: { min: 1, max: 12, mode: "box" } } },
       { name: "badge_size", label: "Badge size (px)", selector: { number: { min: 24, max: 160, mode: "box" } } },
       { name: "icon_size", label: "Icon size (px, empty = auto)", selector: { number: { min: 8, max: 160, mode: "box" } } },
       { name: "gap", label: "Spacing (px)", selector: { number: { min: 0, max: 60, mode: "box" } } },
-      { name: "align", label: "Alignment", selector: { select: { mode: "dropdown", options: opt({ start: "Left", center: "Center", end: "Right" }) } } }
+      { name: "align", label: "Grid alignment", selector: { select: { mode: "dropdown", options: opt({ start: "Left", center: "Center", end: "Right" }) } } },
+      { name: "card_padding", label: "Card padding (px)", selector: { number: { min: 0, max: 48, mode: "box" } } }
     ),
     { name: "card_background", label: "Card background", selector: { boolean: {} } },
     grid(
@@ -1071,7 +1311,9 @@ const GENERAL_SCHEMAS = {
     grid(
       { name: "radius_mode", label: "Rounding", selector: { select: { mode: "dropdown", options: opt({ theme: "Follow theme", fixed: "Fixed value", circle: "Circle" }) } } },
       { name: "radius_value", label: "Rounding (px)", selector: { number: { min: 0, max: 64, mode: "box" } } },
+      { name: "gradient_type", label: "Gradient type", selector: { select: { mode: "dropdown", options: opt({ linear: "Linear", radial: "Radial", conic: "Conic", diamond: "Mirrored" }) } } },
       { name: "gradient_angle", label: "Gradient angle", selector: { number: { min: 0, max: 360, mode: "box" } } },
+      { name: "badge_border", label: "Border width (px)", selector: { number: { min: 0, max: 8, mode: "box" } } },
       { name: "icon_shadow", label: "Icon shadow", selector: { select: { mode: "dropdown", options: opt({ none: "None", soft: "Soft", medium: "Medium", strong: "Strong" }) } } },
       { name: "shine", label: "Glossy highlight", selector: { boolean: {} } },
       { name: "shadow", label: "Badge shadow", selector: { boolean: {} } }
@@ -1081,12 +1323,23 @@ const GENERAL_SCHEMAS = {
     grid(
       { name: "show_names", label: "Show names", selector: { boolean: {} } },
       { name: "name_size", label: "Text size (px)", selector: { number: { min: 8, max: 24, mode: "box" } } },
+      { name: "name_weight", label: "Font weight", selector: { select: { mode: "dropdown", options: NAME_WEIGHTS } } },
+      { name: "name_transform", label: "Letter case", selector: { select: { mode: "dropdown", options: opt({ none: "As typed", uppercase: "UPPERCASE", lowercase: "lowercase", capitalize: "Capitalize" }) } } },
+      { name: "name_gap", label: "Gap to badge (px)", selector: { number: { min: 0, max: 24, mode: "box" } } },
+      { name: "marquee_speed", label: "Scroll speed (px/s)", selector: { number: { min: 5, max: 120, mode: "box" } } },
       { name: "name_overflow", label: "Long names", selector: { select: { mode: "dropdown", options: opt({ scroll: "Scroll (marquee)", ellipsis: "Cut off (…)", wrap: "Wrap to 2 lines" }) } } },
       { name: "name_shadow", label: "Text shadow", selector: { boolean: {} } },
       { name: "name_shadow_blur", label: "Shadow blur (px)", selector: { number: { min: 0, max: 12, mode: "box" } } }
     ),
   ],
   effects: [
+    grid(
+      { name: "appear_animation", label: "Appear animation", selector: { select: { mode: "dropdown", options: opt(APPEAR_ANIMATIONS) } } },
+      { name: "appear_order", label: "Appear order", selector: { select: { mode: "dropdown", options: opt(APPEAR_ORDERS) } } },
+      { name: "appear_trigger", label: "Play when", selector: { select: { mode: "dropdown", options: opt({ load: "Card is shown", visible: "Scrolled into view" }) } } },
+      { name: "appear_duration", label: "Duration (ms)", selector: { number: { min: 100, max: 2000, step: 50, mode: "box" } } },
+      { name: "appear_stagger", label: "Delay between apps (ms)", selector: { number: { min: 0, max: 300, step: 5, mode: "box" } } }
+    ),
     grid(
       { name: "hover_animation", label: "Hover animation", selector: { select: { mode: "dropdown", options: opt(HOVER_ANIMATIONS) } } },
       { name: "press_animation", label: "Press animation", selector: { select: { mode: "dropdown", options: opt(PRESS_ANIMATIONS) } } },
@@ -1115,6 +1368,10 @@ const APP_SCHEMAS = {
   entity: [
     { name: "entity", label: "Entity (state dot, more-info, toggle)", selector: { entity: {} } },
     { name: "notify_entity", label: "Notification badge entity (count or on/off)", selector: { entity: {} } },
+    { name: "notify_text", label: "Static badge text (used when no entity is set)", selector: { text: {} } },
+  ],
+  style: [
+    { name: "badge_style", label: "Badge style (overrides the card style)", selector: { select: { mode: "dropdown", options: [{ value: "", label: "Card default" }, ...opt(BADGE_STYLES)] } } },
   ],
   actions: [
     { name: "tap_action", label: "Tap (overrides path)", selector: { ui_action: {} } },
@@ -1166,6 +1423,7 @@ const EDITOR_CSS = `
   .preset:hover { transform:scale(1.1); }
   .preset.active { outline:2px solid var(--primary-color); }
   .preset.auto { background:var(--secondary-background-color); color:var(--secondary-text-color); font-size:10px; font-weight:600; }
+  .add.replay { margin:0 0 14px; background:var(--secondary-background-color); color:var(--primary-text-color); }
   .add { cursor:pointer; border:none; border-radius:var(--ha-card-border-radius, 12px); padding:10px 14px; margin-top:8px; width:100%;
          background:var(--primary-color); color:var(--text-primary-color, #fff); font-weight:500; font-size:14px; }`;
 
@@ -1345,7 +1603,20 @@ class LauncherCardEditor extends HTMLElement {
       this._generalForms.push(f);
       panels[id].appendChild(f);
     }
-    panels.badges.appendChild(this._section("Colors", this._globalPicker("icon_color", "Icon color (all apps)", "per style")));
+    panels.badges.appendChild(
+      this._section(
+        "Colors",
+        this._globalPicker("icon_color", "Icon color (all apps)", "per style"),
+        this._globalPicker("badge_border_color", "Border color", "rgba(255,255,255,.35)"),
+        this._globalPicker("indicator_color", "Active dot color", "theme text")
+      )
+    );
+    panels.layout.appendChild(this._section("Colors", this._globalPicker("title_color", "Title color", "theme text")));
+    const replay = document.createElement("button");
+    replay.className = "add replay";
+    replay.textContent = "▶ Replay appear animation";
+    replay.addEventListener("click", () => window.dispatchEvent(new CustomEvent("launcher-card-replay")));
+    panels.effects.prepend(replay);
     this._shadowColor = this._globalPicker("name_shadow_color", "Text shadow color", "rgba(0,0,0,.65)");
     panels.names.appendChild(this._section("Colors", this._globalPicker("name_color", "Name color", "theme text"), this._shadowColor));
 
@@ -1395,6 +1666,9 @@ class LauncherCardEditor extends HTMLElement {
       this._open.delete(i); this._open.delete(i + d);
       if (a) this._open.add(i + d);
       if (b) this._open.add(i);
+      const ta = this._appTab.get(i), tb = this._appTab.get(i + d);
+      this._appTab.set(i, tb);
+      this._appTab.set(i + d, ta);
       this._setApps(apps, true);
     };
     const up = mk("mdi:arrow-up", "Move up", () => move(-1));
@@ -1403,11 +1677,13 @@ class LauncherCardEditor extends HTMLElement {
       const apps = [...this._config.apps];
       apps.splice(i + 1, 0, { ...apps[i] });
       this._open = new Set([...this._open].map((x) => (x > i ? x + 1 : x)));
+      this._appTab = new Map([...this._appTab].map(([k, v]) => [k > i ? k + 1 : k, v]));
       this._setApps(apps, true);
     });
     mk("mdi:delete-outline", "Remove", () => {
       const apps = this._config.apps.filter((_, j) => j !== i);
       this._open = new Set([...this._open].filter((x) => x !== i).map((x) => (x > i ? x - 1 : x)));
+      this._appTab = new Map([...this._appTab].filter(([k]) => k !== i).map(([k, v]) => [k > i ? k - 1 : k, v]));
       this._setApps(apps, true);
     });
     details.appendChild(summary);
@@ -1418,6 +1694,8 @@ class LauncherCardEditor extends HTMLElement {
     body.appendChild(bar);
     Object.values(panels).forEach((p) => body.appendChild(p));
 
+    const colorsTop = document.createElement("div");
+    panels.colors.appendChild(colorsTop);
     const forms = Object.entries(APP_SCHEMAS).map(([id, schema]) => {
       const f = this._form(schema, (v, keys) => {
         const app = { ...this._config.apps[i] };
@@ -1432,7 +1710,7 @@ class LauncherCardEditor extends HTMLElement {
         this._setApps(apps, false);
         this._syncRow(i);
       });
-      panels[id].appendChild(f);
+      (id === "style" ? colorsTop : panels[id]).appendChild(f);
       return f;
     });
 
@@ -1549,12 +1827,13 @@ class LauncherCardEditor extends HTMLElement {
   }
 }
 
-customElements.define("launcher-card", LauncherCard);
-customElements.define("launcher-card-editor", LauncherCardEditor);
-if (!customElements.get("launcher-color-picker")) customElements.define("launcher-color-picker", LauncherColorPicker);
+const define = (name, cls) => customElements.get(name) || customElements.define(name, cls);
+define("launcher-card", LauncherCard);
+define("launcher-card-editor", LauncherCardEditor);
+define("launcher-color-picker", LauncherColorPicker);
 
 window.customCards = window.customCards || [];
-window.customCards.push({
+if (!window.customCards.some((c) => c.type === "launcher-card")) window.customCards.push({
   type: "launcher-card",
   name: "Launcher-Card",
   description: "Phone home screen style grid of app badges that navigate to dashboards.",
