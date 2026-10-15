@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.9";
+const CARD_VERSION = "0.2.10";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -18,11 +18,13 @@ const PRESET_NAMES = Object.keys(PRESETS);
 const BADGE_STYLES = {
   gradient: "Gradient",
   flat: "Flat",
-  depth: "Depth (soft raised)",
-  pillow: "Pillow (soft convex)",
-  key: "Key (raised cap)",
-  stack: "Stack (layered plates)",
-  inset: "Inset (recessed)",
+  glossy: "Glossy (3D)",
+  depth: "Depth (3D slab)",
+  pillow: "Pillow (3D inflated)",
+  sphere: "Sphere (3D, round)",
+  key: "Key (3D raised cap)",
+  stack: "Stack (3D layered)",
+  inset: "Inset (3D recessed)",
   glass: "Frosted glass",
   liquid: "Liquid glass",
   liquid_tint: "Liquid glass (tinted)",
@@ -32,16 +34,22 @@ const BADGE_STYLES = {
 };
 
 const LEGACY_STYLES = {
-  aurora: "gradient", clay: "pillow", inflated: "pillow", bevel: "key", orb: "pillow", chrome: "depth",
+  aurora: "gradient", clay: "pillow", inflated: "pillow", bevel: "key", orb: "sphere", chrome: "depth",
   soft: "inset", neon: "dark", bubble: "glass", liquid_dark: "liquid_tint",
 };
 const styleName = (n, fallback = "gradient") => (BADGE_STYLES[n] ? n : LEGACY_STYLES[n] || fallback);
 
 const ICON_SHADOWS = {
-  none: "drop-shadow(0 0 0 transparent)",
+  none: "none",
   soft: "drop-shadow(0 1px 2px rgba(0,0,0,.25))",
   medium: "drop-shadow(0 2px 3px rgba(0,0,0,.4))",
   strong: "drop-shadow(0 3px 5px rgba(0,0,0,.55)) drop-shadow(0 0 2px rgba(0,0,0,.35))",
+};
+const ICON_SHADOWS_3D = {
+  none: "none",
+  soft: "drop-shadow(0 -.5px 0 rgba(var(--hi),.45)) drop-shadow(0 1.5px 1.5px rgba(var(--dp),.45))",
+  medium: "drop-shadow(0 -.5px 0 rgba(var(--hi),.5)) drop-shadow(0 2px 2.5px rgba(var(--dp),.55))",
+  strong: "drop-shadow(0 -1px 0 rgba(var(--hi),.55)) drop-shadow(0 3px 4px rgba(var(--dp),.65))",
 };
 
 const DEFAULTS = {
@@ -207,7 +215,110 @@ function hsvToRgb(h, s, v) {
   return [f(5), f(3), f(1)];
 }
 
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+function rgbToHsl([r, g, b]) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  let h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h *= 60;
+  return [h < 0 ? h + 360 : h, s, l];
+}
+function hslToRgb(h, s, l) {
+  h = ((h % 360) + 360) % 360;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    return (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))) * 255;
+  };
+  return [f(0), f(8), f(4)];
+}
+let colorCtx;
+function parseColor(v) {
+  if (!v) return null;
+  const direct = hexToRgb(v);
+  if (direct) return direct;
+  if (/^(var|color-mix|currentcolor|inherit)/i.test(String(v).trim())) return null;
+  try {
+    colorCtx = colorCtx || document.createElement("canvas").getContext("2d");
+    colorCtx.fillStyle = "#010203";
+    colorCtx.fillStyle = String(v);
+    const out = colorCtx.fillStyle;
+    if (out === "#010203") return null;
+    return hexToRgb(out);
+  } catch (e) {
+    return null;
+  }
+}
+const trip = (rgb) => rgb.map((x) => Math.round(clamp(x, 0, 255))).join(",");
+const PALETTES = new Map();
+function palette(a, b) {
+  const key = `${a}|${b || ""}`;
+  if (PALETTES.has(key)) return PALETTES.get(key);
+  const ra = parseColor(a);
+  let p;
+  if (!ra) {
+    p = { c1: a, c2: b || a, hi: "255,255,255", mid: "128,128,128", lo: "45,45,50", dp: "0,0,0" };
+  } else {
+    const rb = b && b !== a ? parseColor(b) : null;
+    let top, bot;
+    if (rb) {
+      top = ra;
+      bot = rb;
+    } else {
+      const [h, s, l] = rgbToHsl(ra);
+      top = hslToRgb(h - 6, clamp(s * 1.02), clamp(l + (1 - l) * 0.24, 0, Math.max(l, 0.95)));
+      bot = hslToRgb(h + 8, clamp(s * 1.05), clamp(l * 0.74, 0.05, 1));
+    }
+    const [ht, st] = rgbToHsl(top);
+    const [hb, sb, lb] = rgbToHsl(bot);
+    const mid = top.map((x, i) => (x + bot[i]) / 2);
+    p = {
+      c1: rgbToHex(top),
+      c2: rgbToHex(bot),
+      hi: trip(hslToRgb(ht, clamp(st * 0.55), 0.94)),
+      mid: trip(mid),
+      lo: trip(hslToRgb(hb + 4, clamp(sb), clamp(lb * 0.62, 0.06, 0.5))),
+      dp: trip(hslToRgb(hb + 6, clamp(sb * 0.8), 0.12)),
+    };
+  }
+  if (PALETTES.size > 300) PALETTES.clear();
+  PALETTES.set(key, p);
+  return p;
+}
+function applyPalette(el, colors) {
+  const p = palette(colors[0], colors[1]);
+  const st = el.style;
+  st.setProperty("--c1", p.c1);
+  st.setProperty("--c2", p.c2);
+  st.setProperty("--hi", p.hi);
+  st.setProperty("--mid", p.mid);
+  st.setProperty("--lo", p.lo);
+  st.setProperty("--dp", p.dp);
+}
+
+const SHEETS = new Map();
+function adoptStyles(root, text) {
+  if (root.adoptedStyleSheets !== undefined && typeof CSSStyleSheet === "function" && CSSStyleSheet.prototype.replaceSync) {
+    let sheet = SHEETS.get(text);
+    if (!sheet) {
+      sheet = new CSSStyleSheet();
+      sheet.replaceSync(text);
+      if (SHEETS.size > 30) SHEETS.delete(SHEETS.keys().next().value);
+      SHEETS.set(text, sheet);
+    }
+    root.adoptedStyleSheets = [sheet];
+    return "";
+  }
+  return `<style>${text}</style>`;
+}
+
 const normalize = (s) => String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+const keywordList = (k) =>
+  (Array.isArray(k) ? k : String(k === undefined || k === null ? "" : k).split(","))
+    .map((x) => String(x).trim())
+    .filter(Boolean);
 const num = (v, d) => (v === undefined || v === null || v === "" || isNaN(Number(v)) ? d : Number(v));
 
 const SEARCH_CARDS = (window.__launcherCardSearch = window.__launcherCardSearch || new Set());
@@ -291,12 +402,22 @@ class LauncherCard extends HTMLElement {
       };
     }
     window.addEventListener("resize", this._onResize);
+    if (!this._vis && "IntersectionObserver" in window) {
+      this._vis = new IntersectionObserver((entries) => {
+        const on = entries[entries.length - 1].isIntersecting;
+        this._offscreen = !on;
+        const card = this.shadowRoot && this.shadowRoot.querySelector("ha-card");
+        if (card) card.classList.toggle("offscreen", !on);
+      });
+    }
+    if (this._vis) this._vis.observe(this);
     this._played = false;
     this._maybeAppear();
   }
 
   disconnectedCallback() {
     if (this._ro) this._ro.disconnect();
+    if (this._vis) this._vis.disconnect();
     if (this._io) this._io.disconnect();
     this._io = null;
     clearTimeout(this._appearTimer);
@@ -738,240 +859,248 @@ class LauncherCard extends HTMLElement {
   _styles() {
     const c = this._config;
     const m = this._metrics();
-    const size = m.badge;
+    const apps = c.apps;
     const cols = this._fixedCols();
-    const grid = cols
-      ? `grid-template-columns:repeat(${cols}, minmax(0, 1fr)); column-gap:0; row-gap:${m.gap}px;`
-      : `grid-template-columns:repeat(auto-fit, ${m.cellH}px); gap:${m.gap}px;`;
-    const justify = { start: "start", end: "end", center: "center" }[c.align] || "center";
-    const outer = c.shadow
-      ? "0 6px 14px -5px color-mix(in srgb, var(--c2) 65%, rgba(0,0,0,.55)), 0 2px 4px rgba(0,0,0,.18)"
-      : "0 0 #0000";
     const pad = m.pad;
     const sh = (v) => (c.shadow ? v : "0 0 #0000");
+    const base = styleName(c.badge_style);
+    const used = new Set([base]);
+    for (const a of apps) if (a.badge_style) used.add(styleName(a.badge_style, base));
+    const hasNotify = apps.some((a) => a.notify_entity || (a.notify_text !== undefined && a.notify_text !== ""));
+    const hasEntity = apps.some((a) => a.entity);
+    const overflow = c.name_overflow;
+    const justify = { start: "start", end: "end", center: "center" }[c.align] || "center";
+    const radius = this._radius();
+    const border = Math.max(0, num(c.badge_border, 0));
     const grad = {
       radial: "radial-gradient(circle at 30% 22%, var(--c1), var(--c2) 85%)",
       conic: "conic-gradient(from var(--ang) at 50% 50%, var(--c1), var(--c2), var(--c1))",
       diamond: "linear-gradient(var(--ang), var(--c1) 0%, var(--c2) 50%, var(--c1) 100%)",
     }[c.gradient_type] || "linear-gradient(var(--ang), var(--c1), var(--c2))";
-    const border = Math.max(0, num(c.badge_border, 0));
+    const gridCols = cols
+      ? `grid-template-columns:repeat(${cols}, minmax(0, 1fr)); column-gap:0; row-gap:${m.gap}px;`
+      : `grid-template-columns:repeat(auto-fit, ${m.cellH}px); gap:${m.gap}px;`;
 
-    return `
-      :host { display:block; }
-      ha-card { ${c.card_background ? "" : "background:none;box-shadow:none;border:none;"} overflow:hidden; }
-      .title { padding:${pad}px ${pad}px 0; font-size:${c.title_size ? `${num(c.title_size, 20)}px` : "var(--ha-card-header-font-size, 20px)"};
-               font-weight:500; text-align:${{ start: "left", center: "center", end: "right" }[c.title_align] || "left"};
-               color:${css(c.title_color) || "var(--primary-text-color)"}; }
-      .grid { display:grid; ${grid} margin:${pad}px; justify-items:center; justify-content:${justify};
-              ${c.icon_color ? `--glob-ic:${css(c.icon_color)};` : ""} }
-      .pages { display:flex; }
-      .pages.paged { overflow-x:auto; scroll-snap-type:x mandatory; scrollbar-width:none; overscroll-behavior-x:contain; cursor:grab; }
-      .pages.paged.dragging { scroll-snap-type:none; cursor:grabbing; user-select:none; -webkit-user-select:none; }
-      .pages.paged.dragging .app { pointer-events:none; }
-      .pages.paged::-webkit-scrollbar { display:none; }
-      .page { flex:0 0 100%; min-width:0; box-sizing:border-box; scroll-snap-align:start; scroll-snap-stop:always; }
-      .dots { display:flex; justify-content:center; align-items:center; gap:8px; padding:0 0 ${Math.max(10, pad)}px; }
-      .dots[hidden] { display:none; }
-      .dot { width:8px; height:8px; padding:0; border:none; border-radius:4px; cursor:pointer; flex:none;
-             background:color-mix(in srgb, var(--primary-text-color) 28%, transparent);
-             transition:width .25s ease, background .25s ease; }
-      .dot.active { width:20px; background:${css(c.dots_color) || "var(--primary-color)"}; }
-      .search { margin:${pad}px ${pad}px 0; display:flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 12px; box-sizing:border-box;
-                border-radius:20px; color:var(--secondary-text-color); --mdc-icon-size:20px; cursor:text;
-                background:color-mix(in srgb, var(--primary-text-color) 7%, transparent);
-                box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--primary-text-color) 8%, transparent);
-                transition:box-shadow .2s ease, background .2s ease; }
-      .search:focus-within { box-shadow:inset 0 0 0 2px var(--primary-color); background:color-mix(in srgb, var(--primary-text-color) 4%, transparent); }
-      /* The app icon rule below also matches ha-icon here, so the bar's icons must be sized explicitly. */
-      .search ha-icon { --mdc-icon-size:20px; width:20px; height:20px; color:inherit; filter:none; flex:none; }
-      .search .clear ha-icon { --mdc-icon-size:18px; width:18px; height:18px; }
-      .search input { flex:1; min-width:0; height:100%; border:none; outline:none; background:none; padding:0;
-                      font:inherit; font-size:15px; color:var(--primary-text-color); }
-      .search input::placeholder { color:var(--secondary-text-color); opacity:1; }
-      .search input::-webkit-search-cancel-button { display:none; }
-      .search .clear { display:none; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:none;
-                       border-radius:50%; background:none; color:inherit; cursor:pointer; --mdc-icon-size:18px; }
-      .search .clear:hover { background:color-mix(in srgb, var(--primary-text-color) 10%, transparent); }
-      .search.has .clear { display:flex; }
-      .app.filtered { display:none; }
-      .searching .app.first .badge { outline:2px solid color-mix(in srgb, var(--primary-color) 70%, transparent); outline-offset:3px; }
-      .empty { text-align:center; color:var(--secondary-text-color); font-size:14px; margin:-4px ${pad}px ${pad}px; }
-      .empty[hidden] { display:none; }
-      .app { display:flex; flex-direction:column; align-items:center; gap:${m.labelGap}px; width:100%; min-width:0;
-             cursor:pointer; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
-             -webkit-tap-highlight-color:transparent; outline:none; touch-action:manipulation; }
-      .wrap { position:relative; flex:none; }
-      .badge { --ang:${Number(c.gradient_angle)}deg; --ic:#fff; --outer:${outer}; --ish:${ICON_SHADOWS[c.icon_shadow] || ICON_SHADOWS.soft};
-               position:relative; width:${size}px; height:${size}px; border-radius:${this._radius()};
-               display:flex; align-items:center; justify-content:center; overflow:hidden; box-sizing:border-box;
-               --grad:${grad}; box-shadow:var(--outer);
-               ${border ? `border:${border}px solid ${css(c.badge_border_color) || "rgba(255,255,255,.35)"};` : ""} }
-      .badge::after { content:""; position:absolute; inset:0; pointer-events:none; border-radius:inherit; }
+    const press = c.press_animation;
+    const scaleT = press === "spring" ? ".4s cubic-bezier(.2,1.7,.4,1)" : ".18s cubic-bezier(.3,.7,.4,1.4)";
+    const T = `translate .25s cubic-bezier(.3,.7,.4,1.4), scale ${scaleT}, rotate .25s ease, filter .2s ease, opacity .2s ease`;
 
-      /* ---- badge styles ----
-         One light source (top-left), thin inner edges instead of heavy gloss, and shadows tinted by the badge color. */
-      .s-gradient { background:var(--grad);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.3), inset 0 0 0 .5px rgba(255,255,255,.18),
-                   ${sh("0 1px 2px rgba(0,0,0,.14), 0 7px 12px -6px color-mix(in srgb, var(--c2) 70%, rgba(0,0,0,.4))")}; }
-      .s-flat { background:var(--c1);
-        box-shadow:inset 0 0 0 .5px rgba(0,0,0,.08), ${sh("0 1px 2px rgba(0,0,0,.18)")}; }
+    const STYLE = {
+      gradient: `.s-gradient{background:var(--grad);
+        box-shadow:inset 0 1px 0 rgba(var(--hi),.5),inset 0 -1px 0 rgba(var(--lo),.25),${sh("0 1px 2px rgba(var(--dp),.25),0 7px 12px -6px rgba(var(--dp),.55)")}}`,
+      flat: `.s-flat{background:var(--c1);box-shadow:inset 0 0 0 1px rgba(var(--lo),.18),${sh("0 1px 2px rgba(var(--dp),.3)")}}`,
 
-      /* Depth: a gently lit slab. Top edge catches light, the underside is shaded, the shadow is layered. */
-      .s-depth {
-        background:linear-gradient(180deg, color-mix(in srgb, var(--c1) 86%, #fff) 0%, var(--c1) 55%, color-mix(in srgb, var(--c1) 80%, var(--c2)) 100%);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 -2px 3px color-mix(in srgb, var(--c2) 45%, rgba(0,0,0,.2)),
-                   inset 0 0 0 .5px rgba(0,0,0,.12),
-                   ${sh("0 1px 1px rgba(0,0,0,.16), 0 4px 8px -2px color-mix(in srgb, var(--c2) 55%, rgba(0,0,0,.35)), 0 12px 18px -10px color-mix(in srgb, var(--c2) 60%, rgba(0,0,0,.4))")}; }
+      glossy: `.s-glossy{--ish:var(--ish3d);background:linear-gradient(180deg,var(--c1) 0%,var(--c2) 100%);
+        box-shadow:inset 0 1px 0 rgba(var(--hi),.9),inset 0 -3px 5px -2px rgba(var(--lo),.75),inset 0 0 0 1px rgba(var(--lo),.35),
+                   ${sh("0 1px 1px rgba(var(--dp),.4),0 5px 8px -3px rgba(var(--dp),.45),0 13px 16px -9px rgba(var(--dp),.55)")}}
+        .s-glossy::before{content:"";position:absolute;left:0;right:0;top:0;height:52%;pointer-events:none;
+        border-radius:0 0 50% 50%/0 0 24% 24%;background:linear-gradient(180deg,rgba(255,255,255,.62),rgba(255,255,255,.1))}`,
 
-      /* Pillow: a soft convex surface lit from the top-left, shaded toward the bottom-right. */
-      .s-pillow {
-        background:radial-gradient(130% 130% at 28% 16%, color-mix(in srgb, var(--c1) 62%, #fff) 0%, var(--c1) 42%, var(--c2) 100%);
-        box-shadow:inset 1px 2px 2px rgba(255,255,255,.4), inset -2px -7px 10px -3px color-mix(in srgb, var(--c2) 70%, rgba(0,0,0,.35)),
-                   inset 0 0 0 .5px rgba(0,0,0,.1),
-                   ${sh("0 2px 3px rgba(0,0,0,.12), 0 9px 14px -7px color-mix(in srgb, var(--c2) 70%, rgba(0,0,0,.4))")}; }
+      depth: `.s-depth{--ish:var(--ish3d);background:linear-gradient(180deg,var(--c1),var(--c2));
+        box-shadow:inset 0 1px 0 rgba(var(--hi),.85),inset 0 -2px 2px rgba(var(--lo),.5),inset 0 0 0 1px rgba(var(--lo),.22),
+                   ${sh("0 1px 1px rgba(var(--dp),.35),0 4px 7px -2px rgba(var(--dp),.4),0 12px 16px -9px rgba(var(--dp),.5)")}}`,
 
-      /* Key: a raised cap with a solid side edge that disappears when pressed. */
-      .s-key {
-        background:linear-gradient(180deg, color-mix(in srgb, var(--c1) 82%, #fff), var(--c1));
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 0 0 .5px rgba(0,0,0,.1),
-                   0 3px 0 color-mix(in srgb, var(--c2) 78%, #000),
-                   ${sh("0 9px 12px -5px rgba(0,0,0,.38)")}; }
+      pillow: `.s-pillow{--ish:var(--ish3d);background:radial-gradient(120% 110% at 30% 14%,rgb(var(--hi)) 0%,var(--c1) 30%,var(--c2) 88%);
+        box-shadow:inset 2px 3px 3px rgba(var(--hi),.9),inset -2px -8px 10px -3px rgba(var(--lo),.8),inset 0 0 0 1px rgba(var(--lo),.3),
+                   ${sh("0 2px 3px rgba(var(--dp),.35),0 11px 14px -6px rgba(var(--dp),.55)")}}
+        .s-pillow::before{content:"";position:absolute;left:14%;top:8%;width:40%;height:22%;border-radius:50%;pointer-events:none;
+        transform:rotate(-20deg);background:radial-gradient(ellipse,rgba(255,255,255,.95),rgba(255,255,255,0) 72%)}`,
 
-      /* Stack: the badge sits on two thinner plates, like a pile of cards. */
-      .s-stack {
-        background:var(--grad);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.4), inset 0 0 0 .5px rgba(0,0,0,.1),
-                   0 4px 0 -1px color-mix(in srgb, var(--c1) 55%, var(--c2)),
-                   0 11px 0 -5px color-mix(in srgb, var(--c1) 30%, var(--c2)),
-                   ${sh("0 14px 14px -10px rgba(0,0,0,.45)")}; }
+      sphere: `.s-sphere{--ish:var(--ish3d);border-radius:50%;
+        background:radial-gradient(circle at 34% 26%,rgb(var(--hi)) 0%,var(--c1) 24%,var(--c2) 66%,rgb(var(--lo)) 100%);
+        box-shadow:inset -3px -6px 10px rgba(var(--dp),.45),inset 2px 3px 4px rgba(var(--hi),.5),
+                   ${sh("0 3px 4px rgba(var(--dp),.3),0 12px 14px -6px rgba(var(--dp),.55)")}}
+        .s-sphere::before{content:"";position:absolute;left:18%;top:9%;width:36%;height:20%;border-radius:50%;pointer-events:none;
+        transform:rotate(-24deg);background:radial-gradient(ellipse,rgba(255,255,255,.9),rgba(255,255,255,0) 70%)}`,
 
-      /* Inset: a recessed well with the icon sitting in it. */
-      .s-inset { --ic:var(--c1);
-        background:linear-gradient(180deg, color-mix(in srgb, var(--c1) 24%, var(--card-background-color, #fff)),
-                                           color-mix(in srgb, var(--c1) 11%, var(--card-background-color, #fff)));
-        box-shadow:inset 0 3px 6px color-mix(in srgb, var(--c1) 38%, rgba(0,0,0,.3)), inset 0 0 0 .5px color-mix(in srgb, var(--c1) 35%, transparent),
-                   ${sh("0 1px 0 rgba(255,255,255,.5)")}; }
+      key: `.s-key{--ish:var(--ish3d);background:linear-gradient(180deg,var(--c1),var(--c2));
+        transition:${T},box-shadow .12s ease;
+        box-shadow:inset 0 0 0 1.5px rgba(var(--hi),.4),inset 0 -3px 4px -1px rgba(var(--lo),.35),0 4px 0 rgb(var(--lo)),
+                   ${sh("0 11px 10px -3px rgba(var(--dp),.5)")}}`,
 
-      .s-glass {
-        background:linear-gradient(var(--ang), color-mix(in srgb, var(--c1) 58%, transparent), color-mix(in srgb, var(--c2) 30%, transparent));
-        backdrop-filter:blur(14px) saturate(170%); -webkit-backdrop-filter:blur(14px) saturate(170%);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 0 0 1px rgba(255,255,255,.28), ${sh("0 8px 16px -8px rgba(0,0,0,.4)")}; }
+      stack: `.s-stack{--ish:var(--ish3d);background:linear-gradient(180deg,var(--c1),var(--c2));
+        box-shadow:inset 0 1px 0 rgba(var(--hi),.7),inset 0 0 0 1px rgba(var(--lo),.25),0 4px 0 -1px rgb(var(--mid)),0 9px 0 -3px rgb(var(--lo)),
+                   ${sh("0 15px 12px -9px rgba(var(--dp),.55)")}}`,
 
-      /* Liquid glass: nearly clear, a bright rim and a soft pool of color along the bottom. */
-      .s-liquid, .s-liquid_tint {
-        backdrop-filter:blur(10px) saturate(190%) brightness(1.08); -webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.08);
-        box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.65), inset -1px -1px 1px rgba(255,255,255,.28),
-                   inset 0 0 0 1px rgba(255,255,255,.14), inset 0 0 14px rgba(255,255,255,.12),
-                   ${sh("0 10px 20px -10px rgba(0,0,0,.45), 0 2px 4px -2px rgba(0,0,0,.2)")}; }
-      .s-liquid { --ic:var(--c1);
-        background:radial-gradient(95% 60% at 50% 115%, color-mix(in srgb, var(--c1) 50%, transparent) 0%, transparent 72%),
-                   linear-gradient(var(--ang), rgba(255,255,255,.26), rgba(255,255,255,.05) 60%, rgba(255,255,255,.12)); }
-      .s-liquid_tint {
-        background:radial-gradient(90% 60% at 60% 115%, color-mix(in srgb, var(--c1) 70%, #fff) 0%, transparent 70%),
-                   linear-gradient(var(--ang), color-mix(in srgb, var(--c1) 72%, transparent), color-mix(in srgb, var(--c2) 58%, transparent)); }
+      inset: `.s-inset{--ic:var(--c2);--ish:var(--ish3d);
+        background:linear-gradient(180deg,rgba(var(--lo),.3),rgba(var(--mid),.12)),var(--card-background-color,#fff);
+        box-shadow:inset 0 3px 7px rgba(var(--dp),.45),inset 0 0 0 1px rgba(var(--lo),.3),${sh("0 1px 0 rgba(255,255,255,.6)")}}`,
 
-      .s-tinted { --ic:var(--c1); background:color-mix(in srgb, var(--c1) 17%, var(--card-background-color, #fff));
-        box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--c1) 26%, transparent), ${sh("0 3px 8px -5px rgba(0,0,0,.3)")}; }
-      .s-dark { --ic:color-mix(in srgb, var(--c1) 85%, #fff);
-        background:linear-gradient(180deg, #2d3037, #181a1f);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.14), inset 0 0 0 .5px rgba(255,255,255,.08), ${sh("0 7px 12px -6px rgba(0,0,0,.6)")}; }
-      .s-minimal { --ic:var(--c1); background:none; box-shadow:none; overflow:visible; border-color:transparent; }
-      .s-minimal ha-icon { --mdc-icon-size:${m.minimalIcon}px; }
+      glass: `.s-glass{background:linear-gradient(var(--ang),rgba(var(--mid),.6),rgba(var(--lo),.3));
+        backdrop-filter:blur(12px) saturate(170%);-webkit-backdrop-filter:blur(12px) saturate(170%);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset 0 0 0 1px rgba(255,255,255,.25),${sh("0 8px 14px -8px rgba(var(--dp),.5)")}}`,
+      liquid: `.s-liquid{--ic:var(--c1);
+        background:radial-gradient(95% 60% at 50% 115%,rgba(var(--mid),.55) 0%,transparent 72%),
+                   linear-gradient(var(--ang),rgba(255,255,255,.26),rgba(255,255,255,.05) 60%,rgba(255,255,255,.12));
+        backdrop-filter:blur(10px) saturate(190%) brightness(1.08);-webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.08);
+        box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.65),inset -1px -1px 1px rgba(255,255,255,.28),inset 0 0 14px rgba(255,255,255,.12),
+                   ${sh("0 10px 20px -10px rgba(var(--dp),.5),0 2px 4px -2px rgba(var(--dp),.25)")}}`,
+      liquid_tint: `.s-liquid_tint{
+        background:radial-gradient(90% 60% at 60% 115%,rgba(var(--hi),.8) 0%,transparent 70%),
+                   linear-gradient(var(--ang),rgba(var(--mid),.72),rgba(var(--lo),.58));
+        backdrop-filter:blur(10px) saturate(190%) brightness(1.08);-webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.08);
+        box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.6),inset -1px -1px 1px rgba(255,255,255,.25),inset 0 0 14px rgba(255,255,255,.12),
+                   ${sh("0 10px 20px -10px rgba(var(--dp),.5),0 2px 4px -2px rgba(var(--dp),.25)")}}`,
+      tinted: `.s-tinted{--ic:var(--c2);background:linear-gradient(180deg,rgba(var(--mid),.24),rgba(var(--mid),.14)),var(--card-background-color,#fff);
+        box-shadow:inset 0 0 0 1px rgba(var(--mid),.32),${sh("0 3px 8px -5px rgba(var(--dp),.45)")}}`,
+      dark: `.s-dark{--ic:var(--c1);background:linear-gradient(180deg,#2d3037,#181a1f);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.07),${sh("0 7px 12px -6px rgba(0,0,0,.6)")}}`,
+      minimal: `.s-minimal{--ic:var(--c1);background:none;box-shadow:none;overflow:visible;border-color:transparent}
+        .s-minimal ha-icon{--mdc-icon-size:${m.minimalIcon}px}`,
+    };
 
-      ${c.shine ? `.s-gradient::after, .s-flat::after, .s-key::after, .s-stack::after {
-                     background:linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,0) 48%); }` : ""}
+    const parts = [];
+    const add = (s) => s && parts.push(s);
 
-      .app:focus-visible .badge { outline:2px solid var(--primary-color); outline-offset:3px; }
-      ${this._animStyles()}
-      ${this._appearStyles()}
+    add(`:host{display:block}
+      ha-card{${c.card_background ? "" : "background:none;box-shadow:none;border:none;"}overflow:hidden}
+      .pages{display:flex}
+      .page{flex:0 0 100%;min-width:0;box-sizing:border-box}
+      .grid{display:grid;${gridCols}margin:${pad}px;justify-items:center;justify-content:${justify};${c.icon_color ? `--glob-ic:${css(c.icon_color)};` : ""}}
+      .empty{text-align:center;color:var(--secondary-text-color);font-size:14px;margin:-4px ${pad}px ${pad}px}
+      .empty[hidden],.dots[hidden]{display:none}`);
 
-      ha-icon { --mdc-icon-size:${m.icon}px; display:flex; position:relative; z-index:1;
-                color:var(--app-ic, var(--glob-ic, var(--ic))); filter:var(--ish); }
-      img { width:${m.image}px; height:${m.image}px; max-width:100%; max-height:100%;
-            object-fit:contain; position:relative; z-index:1; filter:var(--ish); }
-      img.cover { width:100%; height:100%; object-fit:cover; filter:none; }
+    if (c.title) {
+      add(`.title{padding:${pad}px ${pad}px 0;font-size:${c.title_size ? `${num(c.title_size, 20)}px` : "var(--ha-card-header-font-size,20px)"};
+        font-weight:500;text-align:${{ start: "left", center: "center", end: "right" }[c.title_align] || "left"};
+        color:${css(c.title_color) || "var(--primary-text-color)"}}`);
+    }
 
-      .notify { position:absolute; top:-6px; right:-6px; z-index:2; min-width:20px; height:20px; padding:0 6px; box-sizing:border-box;
-                border-radius:10px; background:var(--notify-color, #ff3b30); color:#fff; font-size:11px; font-weight:600;
-                display:none; align-items:center; justify-content:center; line-height:1;
-                box-shadow:0 0 0 2px var(--card-background-color, #fff), 0 2px 4px rgba(0,0,0,.3); }
-      .notify.dot { min-width:12px; width:12px; height:12px; padding:0; top:-3px; right:-3px; }
-      .notify.show { display:flex; animation:pop .25s cubic-bezier(.3,.7,.4,1.6); }
-      @keyframes pop { from { transform:scale(0); } to { transform:scale(1); } }
+    if (c.pages) {
+      add(`.pages.paged{overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain;cursor:grab}
+        .pages.paged::-webkit-scrollbar{display:none}
+        .pages.paged.dragging{scroll-snap-type:none;cursor:grabbing;user-select:none;-webkit-user-select:none}
+        .pages.paged.dragging .app{pointer-events:none}
+        .page{scroll-snap-align:start;scroll-snap-stop:always}
+        .dots{display:flex;justify-content:center;align-items:center;gap:8px;padding:0 0 ${Math.max(10, pad)}px}
+        .dot{width:8px;height:8px;padding:0;border:none;border-radius:4px;cursor:pointer;flex:none;
+          background:var(--divider-color,rgba(127,127,127,.4));transition:width .25s ease,background-color .25s ease}
+        .dot.active{width:20px;background:${css(c.dots_color) || "var(--primary-color)"}}`);
+    }
 
-      .indicator { position:absolute; left:50%; bottom:-6px; width:4px; height:4px; margin-left:-2px; border-radius:50%;
-                   background:${css(c.indicator_color) || "var(--primary-text-color)"}; opacity:0; transition:opacity .2s ease; }
-      .app.active .indicator { opacity:${c.indicator_color ? 1 : 0.7}; }
-      .app.unavail .badge { filter:grayscale(1); opacity:.45; }
+    if (c.search) {
+      add(`.search{margin:${pad}px ${pad}px 0;display:flex;align-items:center;gap:8px;height:40px;padding:0 8px 0 12px;box-sizing:border-box;
+          border-radius:20px;color:var(--secondary-text-color);cursor:text;background:rgba(127,127,127,.12);
+          box-shadow:inset 0 0 0 1px rgba(127,127,127,.15);transition:box-shadow .2s ease}
+        .search:focus-within{box-shadow:inset 0 0 0 2px var(--primary-color)}
+        .search ha-icon{--mdc-icon-size:20px;width:20px;height:20px;color:inherit;flex:none}
+        .search .clear ha-icon{--mdc-icon-size:18px;width:18px;height:18px}
+        .search input{flex:1;min-width:0;height:100%;border:none;outline:none;background:none;padding:0;font:inherit;font-size:15px;color:var(--primary-text-color)}
+        .search input::placeholder{color:var(--secondary-text-color);opacity:1}
+        .search input::-webkit-search-cancel-button{display:none}
+        .search .clear{display:none;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;
+          border-radius:50%;background:none;color:inherit;cursor:pointer}
+        .search .clear:hover{background:rgba(127,127,127,.2)}
+        .search.has .clear{display:flex}
+        .searching .app.first .badge{outline:2px solid var(--primary-color);outline-offset:3px}`);
+    }
+    add(`.app.filtered{display:none}`);
 
-      .name { font-size:${Number(c.name_size) || 12}px; line-height:${m.lineH}px; height:${m.lineH * (c.name_overflow === "wrap" ? 2 : 1)}px;
-              width:100%; text-align:center; overflow:hidden; color:${css(c.name_color) || "var(--primary-text-color)"};
-              ${c.name_weight ? `font-weight:${num(c.name_weight, 400)};` : ""}
-              ${["uppercase", "lowercase", "capitalize"].includes(c.name_transform) ? `text-transform:${c.name_transform}; letter-spacing:.02em;` : ""} }
-      ${c.name_shadow ? `.name { text-shadow:0 1px ${Math.max(0, Number(c.name_shadow_blur) || 0)}px ${css(c.name_shadow_color) || "rgba(0,0,0,.65)"}; }` : ""}
-      .track { display:inline-block; max-width:100%; white-space:nowrap; }
-      .t { display:inline-block; white-space:nowrap; }
-      .t.clone { display:none; padding-left:24px; }
-      ${c.name_overflow === "wrap" ? `
-      .track, .t { display:block; white-space:normal; }
-      .t { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }` : ""}
-      ${c.name_overflow === "ellipsis" ? `.track, .t { display:block; overflow:hidden; text-overflow:ellipsis; }` : ""}
-      .marquee { text-align:left;
-                 -webkit-mask-image:linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
-                 mask-image:linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); }
-      .marquee .track { max-width:none; animation:marquee var(--dur, 8s) linear infinite; }
-      .marquee .t.clone { display:inline-block; }
-      @keyframes marquee { 0%, 18% { transform:translateX(0); } 100% { transform:translateX(calc(-1 * var(--dist))); } }
-      @media (prefers-reduced-motion: reduce) {
-        .marquee { -webkit-mask-image:none; mask-image:none; text-align:center; }
-        .marquee .track { animation:none; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
-        .marquee .t.clone { display:none; }
+    add(`.app{display:flex;flex-direction:column;align-items:center;gap:${m.labelGap}px;width:100%;min-width:0;contain:layout style;
+        cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
+        -webkit-tap-highlight-color:transparent;outline:none;touch-action:manipulation}
+      .wrap{position:relative;flex:none}
+      .badge{--ang:${num(c.gradient_angle, 145)}deg;--ic:#fff;--grad:${grad};
+        --ish:${ICON_SHADOWS[c.icon_shadow] || ICON_SHADOWS.soft};--ish3d:${ICON_SHADOWS_3D[c.icon_shadow] || ICON_SHADOWS_3D.soft};
+        position:relative;width:${m.badge}px;height:${m.badge}px;border-radius:${radius};
+        display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box;
+        ${border ? `border:${border}px solid ${css(c.badge_border_color) || "rgba(255,255,255,.35)"};` : ""}
+        transition:${T}}
+      .app:focus-visible .badge{outline:2px solid var(--primary-color);outline-offset:3px}`);
+
+    for (const name of used) add(STYLE[name]);
+    if (c.shine && ["gradient", "flat"].some((n) => used.has(n))) {
+      add(`.s-gradient::after,.s-flat::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;
+        background:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,0) 48%)}`);
+    }
+
+    add(this._animStyles(T));
+    add(this._appearStyles());
+
+    add(`ha-icon{--mdc-icon-size:${m.icon}px;display:flex;position:relative;z-index:1;color:var(--app-ic,var(--glob-ic,var(--ic)));
+        ${c.icon_shadow === "none" ? "" : "filter:var(--ish);"}}
+      img{width:${m.image}px;height:${m.image}px;max-width:100%;max-height:100%;object-fit:contain;position:relative;z-index:1;
+        ${c.icon_shadow === "none" ? "" : "filter:var(--ish);"}}
+      img.cover{width:100%;height:100%;object-fit:cover;filter:none}`);
+    if (hasNotify) {
+      add(`.notify{position:absolute;top:-6px;right:-6px;z-index:2;min-width:20px;height:20px;padding:0 6px;box-sizing:border-box;
+          border-radius:10px;background:var(--notify-color,#ff3b30);color:#fff;font-size:11px;font-weight:600;
+          display:none;align-items:center;justify-content:center;line-height:1;
+          box-shadow:0 0 0 2px var(--card-background-color,#fff),0 2px 4px rgba(0,0,0,.3)}
+        .notify.dot{min-width:12px;width:12px;height:12px;padding:0;top:-3px;right:-3px}
+        .notify.show{display:flex;animation:lc-pop .25s cubic-bezier(.3,.7,.4,1.6)}
+        @keyframes lc-pop{from{transform:scale(0)}to{transform:scale(1)}}`);
+    }
+    if (hasEntity) {
+      add(`.indicator{position:absolute;left:50%;bottom:-6px;width:4px;height:4px;margin-left:-2px;border-radius:50%;
+          background:${css(c.indicator_color) || "var(--primary-text-color)"};opacity:0;transition:opacity .2s ease}
+        .app.active .indicator{opacity:${c.indicator_color ? 1 : 0.7}}
+        .app.unavail .badge{filter:grayscale(1);opacity:.45}`);
+    }
+
+    if (c.show_names) {
+      const lines = overflow === "wrap" ? 2 : 1;
+      add(`.name{font-size:${num(c.name_size, 12)}px;line-height:${m.lineH}px;height:${m.lineH * lines}px;width:100%;text-align:center;
+          overflow:hidden;color:${css(c.name_color) || "var(--primary-text-color)"};
+          ${c.name_weight ? `font-weight:${num(c.name_weight, 400)};` : ""}
+          ${["uppercase", "lowercase", "capitalize"].includes(c.name_transform) ? `text-transform:${c.name_transform};letter-spacing:.02em;` : ""}
+          ${c.name_shadow ? `text-shadow:0 1px ${Math.max(0, num(c.name_shadow_blur, 3))}px ${css(c.name_shadow_color) || "rgba(0,0,0,.65)"};` : ""}}
+        .track,.t{display:inline-block;white-space:nowrap}
+        .track{max-width:100%}`);
+      if (overflow === "wrap") {
+        add(`.track,.t{display:block;white-space:normal}
+          .t{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}`);
+      } else if (overflow === "ellipsis") {
+        add(`.track,.t{display:block;overflow:hidden;text-overflow:ellipsis}`);
+      } else {
+        add(`.t.clone{display:none;padding-left:24px}
+          .marquee{text-align:left;-webkit-mask-image:linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent);
+            mask-image:linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)}
+          .marquee .track{max-width:none;animation:lc-marquee var(--dur,8s) linear infinite}
+          .marquee .t.clone{display:inline-block}
+          .offscreen .marquee .track{animation-play-state:paused}
+          @keyframes lc-marquee{0%,18%{transform:translateX(0)}100%{transform:translateX(calc(-1 * var(--dist)))}}
+          @media (prefers-reduced-motion:reduce){
+            .marquee{-webkit-mask-image:none;mask-image:none;text-align:center}
+            .marquee .track{animation:none;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+            .marquee .t.clone{display:none}}`);
       }
-    `;
+    }
+
+    return parts.join("\n").replace(/\n\s+/g, "\n");
   }
 
   _animStyles() {
     const c = this._config;
-    const spring = "cubic-bezier(.3,.7,.4,1.4)";
+    const out = [];
+    const h = c.hover_animation, p = c.press_animation;
     const hover = {
-      lift: ".app:hover .badge { translate:0 -3px; }",
-      grow: ".app:hover .badge { scale:1.08; }",
-      tilt: `.app:hover .badge { transform:perspective(${(Number(c.badge_size) || 60) * 4}px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
-               scale:1.05; transition-duration:.08s, .25s, .25s, .25s, .2s, .2s, .2s; }`,
-      glow: ".app:hover .badge { translate:0 -1px; filter:drop-shadow(0 0 10px color-mix(in srgb, var(--c1) 75%, transparent)); }",
-      wiggle: ".app:hover .badge { animation:lc-wiggle .45s ease; }",
-      float: ".app:hover .badge { animation:lc-float 1.8s ease-in-out infinite; }",
-    }[c.hover_animation] || "";
+      lift: ".app:hover .badge{translate:0 -3px}",
+      grow: ".app:hover .badge{scale:1.08}",
+      tilt: `.app:hover .badge{transform:perspective(${num(c.badge_size, 60) * 4}px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));scale:1.05}`,
+      glow: ".app:hover .badge{translate:0 -1px;filter:drop-shadow(0 0 10px rgba(var(--mid),.85))}",
+      wiggle: ".app:hover .badge{animation:lc-wiggle .45s ease}@keyframes lc-wiggle{0%,100%{rotate:0deg}25%{rotate:-7deg}50%{rotate:5deg}75%{rotate:-3deg}}",
+      float: ".app:hover .badge{animation:lc-float 1.8s ease-in-out infinite}.offscreen .badge{animation-play-state:paused}@keyframes lc-float{0%,100%{translate:0 0}50%{translate:0 -5px}}",
+    }[h];
+    if (hover) out.push(`@media (hover:hover){${hover}}`);
     const press = {
-      shrink: ".app.pressed .badge { scale:.88; filter:brightness(.9); }",
-      push: ".app.pressed .badge { translate:0 3px; scale:.95; filter:brightness(.92); }",
-      spring: `.badge { transition-timing-function:${spring}, cubic-bezier(.2,.9,.3,1.9), cubic-bezier(.2,.9,.3,1.9), ease, ease, ease, ease;
-                        transition-duration:.18s, .45s, .45s, .25s, .2s, .2s, .2s; }
-               .app.pressed .badge { scale:.8; translate:0 0; transition-duration:.1s; }`,
-      jelly: ".app.tapped .badge { animation:lc-jelly .5s ease; }",
-      ripple: `.app.pressed .badge { scale:.94; }
-               .app.tapped .wrap::after { animation:lc-ripple .6s ease-out; }`,
-    }[c.press_animation] || "";
-    const physical = c.press_animation && c.press_animation !== "none"
-      ? `.app.pressed .s-key { translate:0 2px; scale:1;
-           box-shadow:inset 0 1px 0 rgba(255,255,255,.4), inset 0 0 0 .5px rgba(0,0,0,.1), 0 1px 0 color-mix(in srgb, var(--c2) 78%, #000); }
-         .app.pressed .s-stack { translate:0 3px; scale:1; }
-         .app.pressed .s-inset { scale:.97; }`
-      : "";
-    return `
-      .badge { transition-property:transform, translate, scale, rotate, filter, opacity, box-shadow;
-               transition-duration:.18s, .25s, .25s, .25s, .2s, .2s, .2s;
-               transition-timing-function:${spring}, ${spring}, ${spring}, ease, ease, ease, ease; }
-      .wrap::after { content:""; position:absolute; inset:0; border-radius:${this._radius()}; pointer-events:none; opacity:0; }
-      @media (hover:hover) { ${hover} }
-      ${press}
-      ${physical}
-      @keyframes lc-wiggle { 0%, 100% { rotate:0deg; } 25% { rotate:-7deg; } 50% { rotate:5deg; } 75% { rotate:-3deg; } }
-      @keyframes lc-float { 0%, 100% { translate:0 0; } 50% { translate:0 -5px; } }
-      @keyframes lc-jelly { 0% { scale:1; } 30% { scale:1.16 .84; } 50% { scale:.9 1.1; } 70% { scale:1.05 .95; } 100% { scale:1; } }
-      @keyframes lc-ripple { 0% { opacity:1; box-shadow:0 0 0 0 color-mix(in srgb, var(--c1) 70%, transparent); }
-                             100% { opacity:0; box-shadow:0 0 0 16px color-mix(in srgb, var(--c1) 0%, transparent); } }
-      @media (prefers-reduced-motion: reduce) { .badge { animation:none !important; } }`;
+      shrink: ".app.pressed .badge{scale:.88;filter:brightness(.92)}",
+      push: ".app.pressed .badge{translate:0 3px;scale:.95;filter:brightness(.94)}",
+      spring: ".app.pressed .badge{scale:.8}",
+      jelly: ".app.tapped .badge{animation:lc-jelly .5s ease}@keyframes lc-jelly{0%{scale:1}30%{scale:1.16 .84}50%{scale:.9 1.1}70%{scale:1.05 .95}100%{scale:1}}",
+      ripple: `.app.pressed .badge{scale:.94}
+        .app.tapped .wrap::after{content:"";position:absolute;inset:0;border-radius:${this._radius()};pointer-events:none;animation:lc-ripple .6s ease-out}
+        @keyframes lc-ripple{0%{box-shadow:0 0 0 0 rgba(var(--mid),.7)}100%{box-shadow:0 0 0 16px rgba(var(--mid),0)}}`,
+    }[p];
+    if (press) {
+      out.push(press);
+      out.push(`.app.pressed .s-key{translate:0 3px;scale:1;
+          box-shadow:inset 0 0 0 1.5px rgba(var(--hi),.4),0 1px 0 rgb(var(--lo))}
+        .app.pressed .s-stack{translate:0 3px;scale:1}
+        .app.pressed .s-inset{scale:.97}`);
+    }
+    out.push("@media (prefers-reduced-motion:reduce){.badge{animation:none!important}}");
+    return out.join("\n");
   }
 
   _render() {
@@ -979,8 +1108,8 @@ class LauncherCard extends HTMLElement {
     if (!c) return;
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
 
-    this.shadowRoot.innerHTML = `
-      <style>${this._styles()}</style>
+    const styleTag = adoptStyles(this.shadowRoot, this._styles());
+    this.shadowRoot.innerHTML = `${styleTag}
       <ha-card>
         ${c.title ? `<div class="title"></div>` : ""}
         ${c.search ? `<label class="search"><ha-icon icon="mdi:magnify"></ha-icon>
@@ -990,10 +1119,12 @@ class LauncherCard extends HTMLElement {
         <div class="dots" hidden></div>
         <div class="empty" hidden>No apps found</div>
       </ha-card>`;
+    if (this._offscreen) this.shadowRoot.querySelector("ha-card").classList.add("offscreen");
     if (c.title) this.shadowRoot.querySelector(".title").textContent = c.title;
 
     const gridEl = this.shadowRoot.querySelector(".grid");
     const style = styleName(c.badge_style);
+    const frag = document.createDocumentFragment();
     this._els = [];
 
     const apps = c.sort === "name"
@@ -1013,18 +1144,17 @@ class LauncherCard extends HTMLElement {
       const badge = document.createElement("div");
       badge.className = `badge s-${styleName(app.badge_style, style)}`;
       const colors = appColors(app);
-      const setColors = (cc) => {
-        el.style.setProperty("--c1", cc[0]);
-        el.style.setProperty("--c2", cc[1]);
-      };
+      const setColors = (cc) => applyPalette(el, cc);
       setColors(colors || PRESETS.blue);
 
       const src = imageOf(app);
       if (src) {
         const img = document.createElement("img");
-        img.src = src;
         img.alt = "";
         img.draggable = false;
+        img.decoding = "async";
+        img.loading = "lazy";
+        img.src = src;
         if (app.fill === true || app.image_fill === true) {
           img.className = "cover";
           badge.style.background = "none";
@@ -1072,10 +1202,12 @@ class LauncherCard extends HTMLElement {
       }
 
       this._bindActions(el, app);
-      gridEl.appendChild(el);
-      this._els.push({ app, el, notify, haystack: normalize(`${app.name || ""} ${app.keywords || ""}`) });
+      frag.appendChild(el);
+      this._els.push({ app, el, notify, haystack: normalize([app.name, ...keywordList(app.keywords)].filter(Boolean).join(" ")) });
     });
 
+    gridEl.appendChild(frag);
+    this._dynamic = this._els.some((x) => x.app.entity || x.app.notify_entity);
     this._page = Math.min(this._page || 0, 999);
     this._setupSearch();
     this._paginate();
@@ -1086,7 +1218,7 @@ class LauncherCard extends HTMLElement {
   }
 
   _update(force) {
-    if (!this._hass || !this._els) return;
+    if (!this._hass || !this._els || !this._dynamic) return;
     const states = this._hass.states;
     for (const item of this._els) {
       const { app, el, notify } = item;
@@ -1564,7 +1696,7 @@ const APP_SCHEMAS = {
       { name: "image", label: "Image URL (replaces icon)", selector: { text: {} } }
     ),
     { name: "path", label: "Navigation path or URL", selector: { text: {} } },
-    { name: "keywords", label: "Search keywords (optional)", selector: { text: {} } },
+    { name: "keywords", label: "Search keywords (comma separated, e.g. lamp, living room, ceiling)", selector: { text: { multiline: true } } },
     grid(
       { name: "new_tab", label: "Open in new tab", selector: { boolean: {} } },
       { name: "fill", label: "Image fills badge", selector: { boolean: {} } },
@@ -1643,7 +1775,9 @@ class LauncherCardEditor extends HTMLElement {
   }
 
   setConfig(config) {
+    const echo = this._built && this._lastEmit !== undefined && (config === this._lastEmit || JSON.stringify(config) === this._lastEmitJson);
     this._config = config;
+    if (echo) return;
     const count = (config.apps || []).length;
     if (!this._built || count !== this._rows.length) this._build();
     else this._sync();
@@ -1656,6 +1790,8 @@ class LauncherCardEditor extends HTMLElement {
 
   _emit(config) {
     this._config = config;
+    this._lastEmit = config;
+    this._lastEmitJson = JSON.stringify(config);
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
   }
 
@@ -1712,7 +1848,10 @@ class LauncherCardEditor extends HTMLElement {
   _setApps(apps, structural) {
     const next = { ...this._config, apps };
     this._emit(next);
-    if (structural) this.setConfig(next);
+    if (structural) {
+      this._lastEmit = undefined;
+      this.setConfig(next);
+    }
   }
 
   _setApp(i, app) {
