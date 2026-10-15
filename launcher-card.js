@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.7";
+const CARD_VERSION = "0.2.8";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -586,6 +586,7 @@ class LauncherCard extends HTMLElement {
     dots.hidden = !show;
     if (!pagesEl._scrollBound) {
       pagesEl._scrollBound = true;
+      this._bindDrag(pagesEl);
       pagesEl.addEventListener(
         "scroll",
         () => {
@@ -618,6 +619,54 @@ class LauncherCard extends HTMLElement {
     const left = this._page * pagesEl.clientWidth;
     if (Math.abs(pagesEl.scrollLeft - left) > 1) pagesEl.scrollLeft = left;
     this._markDots();
+  }
+
+  _bindDrag(pagesEl) {
+    let down = null, dragging = false, suppress = false;
+    pagesEl.addEventListener("pointerdown", (e) => {
+      if (e.pointerType !== "mouse" || e.button !== 0 || !this._config.pages || this._pageCount < 2) return;
+      const app = e.composedPath().find((n) => n.classList && n.classList.contains("app"));
+      down = { x: e.clientX, left: pagesEl.scrollLeft, id: e.pointerId, app };
+      dragging = false;
+    });
+    pagesEl.addEventListener("pointermove", (e) => {
+      if (!down || e.pointerId !== down.id) return;
+      const dx = e.clientX - down.x;
+      if (!dragging) {
+        if (Math.abs(dx) < 6) return;
+        dragging = true;
+        pagesEl.setPointerCapture(e.pointerId);
+        pagesEl.classList.add("dragging");
+        if (down.app) down.app.dispatchEvent(new PointerEvent("pointercancel"));
+      }
+      pagesEl.scrollLeft = down.left - dx;
+    });
+    const end = (e) => {
+      if (!down) return;
+      if (dragging) {
+        const w = pagesEl.clientWidth || 1;
+        const dx = e.clientX - down.x;
+        const start = Math.round(down.left / w);
+        const target = Math.max(0, Math.min(this._pageCount - 1, start + (dx < -w * 0.15 ? 1 : dx > w * 0.15 ? -1 : 0)));
+        pagesEl.classList.remove("dragging");
+        pagesEl.scrollTo({ left: target * w, behavior: "smooth" });
+        suppress = true;
+        setTimeout(() => (suppress = false), 0);
+      }
+      down = null;
+      dragging = false;
+    };
+    pagesEl.addEventListener("pointerup", end);
+    pagesEl.addEventListener("pointercancel", end);
+    pagesEl.addEventListener(
+      "click",
+      (e) => {
+        if (!suppress) return;
+        e.stopPropagation();
+        e.preventDefault();
+      },
+      true
+    );
   }
 
   _markDots() {
@@ -695,7 +744,9 @@ class LauncherCard extends HTMLElement {
       .grid { display:grid; ${grid} margin:${pad}px; justify-items:center; justify-content:${justify};
               ${c.icon_color ? `--glob-ic:${css(c.icon_color)};` : ""} }
       .pages { display:flex; }
-      .pages.paged { overflow-x:auto; scroll-snap-type:x mandatory; scrollbar-width:none; overscroll-behavior-x:contain; }
+      .pages.paged { overflow-x:auto; scroll-snap-type:x mandatory; scrollbar-width:none; overscroll-behavior-x:contain; cursor:grab; }
+      .pages.paged.dragging { scroll-snap-type:none; cursor:grabbing; user-select:none; -webkit-user-select:none; }
+      .pages.paged.dragging .app { pointer-events:none; }
       .pages.paged::-webkit-scrollbar { display:none; }
       .page { flex:0 0 100%; min-width:0; box-sizing:border-box; scroll-snap-align:start; scroll-snap-stop:always; }
       .dots { display:flex; justify-content:center; align-items:center; gap:8px; padding:0 0 ${Math.max(10, pad)}px; }
