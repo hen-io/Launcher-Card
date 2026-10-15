@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.10";
+const CARD_VERSION = "0.2.11";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -29,6 +29,7 @@ const BADGE_STYLES = {
   liquid: "Liquid glass",
   liquid_tint: "Liquid glass (tinted)",
   tinted: "Tinted",
+  light: "Light",
   dark: "Dark",
   minimal: "Minimal (icon only)",
 };
@@ -193,6 +194,19 @@ function hexToRgb(h) {
   }
   return [0, 2, 4].map((i) => parseInt(s.slice(i, i + 2), 16));
 }
+function parseRgba(v) {
+  const t = String(v || "").trim();
+  const h = t.replace(/^#/, "");
+  if (t[0] === "#" && /^[0-9a-f]{8}$/i.test(h)) return [0, 2, 4, 6].map((i, k) => parseInt(h.slice(i, i + 2), 16) / (k === 3 ? 255 : 1));
+  const m = t.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+%?)\s*)?\)$/i);
+  if (m) {
+    const a = m[4] === undefined ? 1 : m[4].endsWith("%") ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
+    return [+m[1], +m[2], +m[3], clampAlpha(a)];
+  }
+  const rgb = hexToRgb(t);
+  return rgb ? [...rgb, 1] : null;
+}
+const clampAlpha = (a) => (isNaN(a) ? 1 : Math.min(1, Math.max(0, a)));
 const rgbToHex = (rgb) => "#" + rgb.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
 function rgbToHsv([r, g, b]) {
   r /= 255; g /= 255; b /= 255;
@@ -259,7 +273,8 @@ function palette(a, b) {
   const ra = parseColor(a);
   let p;
   if (!ra) {
-    p = { c1: a, c2: b || a, hi: "255,255,255", mid: "128,128,128", lo: "45,45,50", dp: "0,0,0" };
+    p = { c1: a, c2: b || a, main: a, t1: "128,128,128", t2: "100,100,100", tint: "#eeeeee", tint2: "#dddddd",
+          hi: "255,255,255", mid: "128,128,128", lo: "45,45,50", dp: "0,0,0" };
   } else {
     const rb = b && b !== a ? parseColor(b) : null;
     let top, bot;
@@ -274,9 +289,16 @@ function palette(a, b) {
     const [ht, st] = rgbToHsl(top);
     const [hb, sb, lb] = rgbToHsl(bot);
     const mid = top.map((x, i) => (x + bot[i]) / 2);
+    const main = rb ? mid : ra;
+    const [hm, sm] = rgbToHsl(main);
     p = {
       c1: rgbToHex(top),
       c2: rgbToHex(bot),
+      main: rgbToHex(main),
+      t1: trip(top),
+      t2: trip(bot),
+      tint: rgbToHex(hslToRgb(hm, clamp(sm * 0.75), 0.9)),
+      tint2: rgbToHex(hslToRgb(hm + 6, clamp(sm * 0.8), 0.82)),
       hi: trip(hslToRgb(ht, clamp(st * 0.55), 0.94)),
       mid: trip(mid),
       lo: trip(hslToRgb(hb + 4, clamp(sb), clamp(lb * 0.62, 0.06, 0.5))),
@@ -292,6 +314,11 @@ function applyPalette(el, colors) {
   const st = el.style;
   st.setProperty("--c1", p.c1);
   st.setProperty("--c2", p.c2);
+  st.setProperty("--main", p.main);
+  st.setProperty("--t1", p.t1);
+  st.setProperty("--t2", p.t2);
+  st.setProperty("--tint", p.tint);
+  st.setProperty("--tint2", p.tint2);
   st.setProperty("--hi", p.hi);
   st.setProperty("--mid", p.mid);
   st.setProperty("--lo", p.lo);
@@ -604,9 +631,11 @@ class LauncherCard extends HTMLElement {
     const labelGap = nameLines ? Math.max(0, num(c.name_gap, 7)) : 0;
     const cellH = badge + labelGap + nameLines * lineH;
     const scaled = (f) => Math.round(badge * (Number(c.icon_scale) || f));
-    const icon = Number(c.icon_size) || scaled(0.55);
-    const minimalIcon = Number(c.icon_size) || scaled(0.8);
-    const image = Number(c.icon_size) || Math.round(badge * (Number(c.image_scale) || 0.62));
+    const pct = num(c.icon_percent, 0);
+    const fixedIcon = pct > 0 ? Math.round((badge * pct) / 100) : Number(c.icon_size) || 0;
+    const icon = fixedIcon || scaled(0.55);
+    const minimalIcon = fixedIcon || scaled(0.8);
+    const image = fixedIcon || Math.round(badge * (Number(c.image_scale) || 0.62));
     const pad = Math.max(0, num(c.card_padding, 16));
     return { badge, lineH, labelGap, cellH, icon, minimalIcon, image, pad, gap: Math.max(0, num(c.gap, 18)) };
   }
@@ -669,7 +698,7 @@ class LauncherCard extends HTMLElement {
       const m = this._metrics();
       const W = Math.max(1, width - 2 * m.pad);
       const fixed = this._fixedCols();
-      const cols = fixed || Math.max(1, Math.floor((W + m.gap) / (m.cellH + m.gap)));
+      const cols = fixed || Math.max(1, Math.min(this._maxCols() || Infinity, Math.floor((W + m.gap) / (m.cellH + m.gap))));
       const rowPitch = fixed ? Math.max(m.cellH + 4, W / cols) : m.cellH + m.gap;
       let rows;
       if (c.rows_per_page === "auto" || c.rows_per_page === undefined || c.rows_per_page === "") {
@@ -800,6 +829,32 @@ class LauncherCard extends HTMLElement {
     };
     pagesEl.addEventListener("pointerup", end);
     pagesEl.addEventListener("pointercancel", end);
+
+    let acc = 0, lockUntil = 0;
+    pagesEl.addEventListener(
+      "wheel",
+      (e) => {
+        if (!this._config.pages || this._pageCount < 2 || e.ctrlKey) return;
+        if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+        const now = performance.now();
+        if (now < lockUntil) {
+          e.preventDefault();
+          return;
+        }
+        const dir = e.deltaY > 0 ? 1 : -1;
+        const target = (this._page || 0) + dir;
+        if (target < 0 || target >= this._pageCount) return;
+        e.preventDefault();
+        acc += e.deltaMode ? dir * 100 : e.deltaY;
+        if (Math.abs(acc) < 40) return;
+        acc = 0;
+        lockUntil = now + 450;
+        this._page = target;
+        this._markDots();
+        pagesEl.scrollTo({ left: target * pagesEl.clientWidth, behavior: "smooth" });
+      },
+      { passive: false }
+    );
     pagesEl.addEventListener(
       "click",
       (e) => {
@@ -814,6 +869,10 @@ class LauncherCard extends HTMLElement {
   _markDots() {
     const dots = this.shadowRoot.querySelector(".dots");
     if (dots) [...dots.children].forEach((d, i) => d.classList.toggle("active", i === (this._page || 0)));
+  }
+
+  _maxCols() {
+    return this._fixedCols() ? 0 : Math.max(0, Math.round(num(this._config.max_columns, 0)));
   }
 
   _fixedCols() {
@@ -880,6 +939,11 @@ class LauncherCard extends HTMLElement {
     const gridCols = cols
       ? `grid-template-columns:repeat(${cols}, minmax(0, 1fr)); column-gap:0; row-gap:${m.gap}px;`
       : `grid-template-columns:repeat(auto-fit, ${m.cellH}px); gap:${m.gap}px;`;
+    const maxCols = this._maxCols();
+    const side = { start: `${pad}px auto ${pad}px ${pad}px`, end: `${pad}px ${pad}px ${pad}px auto` }[c.align] || `${pad}px auto`;
+    const gridBox = maxCols
+      ? `width:min(calc(100% - ${2 * pad}px), ${maxCols * m.cellH + (maxCols - 1) * m.gap}px);margin:${side};`
+      : `margin:${pad}px;`;
 
     const press = c.press_animation;
     const scaleT = press === "spring" ? ".4s cubic-bezier(.2,1.7,.4,1)" : ".18s cubic-bezier(.3,.7,.4,1.4)";
@@ -926,25 +990,35 @@ class LauncherCard extends HTMLElement {
         background:linear-gradient(180deg,rgba(var(--lo),.3),rgba(var(--mid),.12)),var(--card-background-color,#fff);
         box-shadow:inset 0 3px 7px rgba(var(--dp),.45),inset 0 0 0 1px rgba(var(--lo),.3),${sh("0 1px 0 rgba(255,255,255,.6)")}}`,
 
-      glass: `.s-glass{background:linear-gradient(var(--ang),rgba(var(--mid),.6),rgba(var(--lo),.3));
+      glass: `.s-glass{
+        background:linear-gradient(180deg,rgba(255,255,255,.3),rgba(255,255,255,0) 55%),
+                   linear-gradient(var(--ang),rgba(var(--t1),.86),rgba(var(--t2),.8));
         backdrop-filter:blur(12px) saturate(170%);-webkit-backdrop-filter:blur(12px) saturate(170%);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.55),inset 0 0 0 1px rgba(255,255,255,.25),${sh("0 8px 14px -8px rgba(var(--dp),.5)")}}`,
-      liquid: `.s-liquid{--ic:var(--c1);
-        background:radial-gradient(95% 60% at 50% 115%,rgba(var(--mid),.55) 0%,transparent 72%),
-                   linear-gradient(var(--ang),rgba(255,255,255,.26),rgba(255,255,255,.05) 60%,rgba(255,255,255,.12));
-        backdrop-filter:blur(10px) saturate(190%) brightness(1.08);-webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.08);
-        box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.65),inset -1px -1px 1px rgba(255,255,255,.28),inset 0 0 14px rgba(255,255,255,.12),
-                   ${sh("0 10px 20px -10px rgba(var(--dp),.5),0 2px 4px -2px rgba(var(--dp),.25)")}}`,
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 1px rgba(255,255,255,.3),
+                   ${sh("0 1px 2px rgba(var(--dp),.2),0 8px 14px -7px rgba(var(--dp),.5)")}}`,
+      liquid: `.s-liquid{
+        background:radial-gradient(120% 70% at 50% -12%,rgba(255,255,255,.5),rgba(255,255,255,0) 62%),
+                   radial-gradient(90% 60% at 50% 115%,rgba(var(--hi),.6) 0%,transparent 70%),
+                   linear-gradient(var(--ang),rgba(var(--t1),.78),rgba(var(--t2),.7));
+        backdrop-filter:blur(10px) saturate(190%) brightness(1.1);-webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.1);
+        box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.75),inset -1px -1px 1px rgba(255,255,255,.35),inset 0 0 0 1px rgba(255,255,255,.18),
+                   inset 0 0 14px rgba(255,255,255,.18),${sh("0 10px 20px -10px rgba(var(--dp),.5),0 2px 4px -2px rgba(var(--dp),.25)")}}`,
       liquid_tint: `.s-liquid_tint{
-        background:radial-gradient(90% 60% at 60% 115%,rgba(var(--hi),.8) 0%,transparent 70%),
-                   linear-gradient(var(--ang),rgba(var(--mid),.72),rgba(var(--lo),.58));
+        background:radial-gradient(120% 70% at 50% -12%,rgba(255,255,255,.42),rgba(255,255,255,0) 60%),
+                   radial-gradient(90% 60% at 60% 115%,rgba(var(--hi),.7) 0%,transparent 70%),
+                   linear-gradient(var(--ang),rgba(var(--t1),.92),rgba(var(--t2),.86));
         backdrop-filter:blur(10px) saturate(190%) brightness(1.08);-webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.08);
-        box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.6),inset -1px -1px 1px rgba(255,255,255,.25),inset 0 0 14px rgba(255,255,255,.12),
+        box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.65),inset -1px -1px 1px rgba(255,255,255,.3),inset 0 0 14px rgba(255,255,255,.14),
                    ${sh("0 10px 20px -10px rgba(var(--dp),.5),0 2px 4px -2px rgba(var(--dp),.25)")}}`,
-      tinted: `.s-tinted{--ic:var(--c2);background:linear-gradient(180deg,rgba(var(--mid),.24),rgba(var(--mid),.14)),var(--card-background-color,#fff);
-        box-shadow:inset 0 0 0 1px rgba(var(--mid),.32),${sh("0 3px 8px -5px rgba(var(--dp),.45)")}}`,
-      dark: `.s-dark{--ic:var(--c1);background:linear-gradient(180deg,#2d3037,#181a1f);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.07),${sh("0 7px 12px -6px rgba(0,0,0,.6)")}}`,
+      tinted: `.s-tinted{--ic:var(--c2);background:linear-gradient(180deg,var(--tint),var(--tint2));
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.7),inset 0 0 0 1px rgba(var(--mid),.22),
+                   ${sh("0 1px 2px rgba(var(--dp),.15),0 6px 10px -6px rgba(var(--dp),.35)")}}`,
+      light: `.s-light{background:linear-gradient(180deg,#fff,#eceef2);
+        box-shadow:inset 0 1px 0 #fff,inset 0 0 0 1px rgba(0,0,0,.06),${sh("0 1px 2px rgba(0,0,0,.12),0 6px 12px -6px rgba(var(--dp),.35)")}}
+        .s-light ha-icon{color:var(--app-ic,var(--main))}`,
+      dark: `.s-dark{background:linear-gradient(180deg,#2d3037,#181a1f);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.07),${sh("0 7px 12px -6px rgba(0,0,0,.6)")}}
+        .s-dark ha-icon{color:var(--app-ic,var(--main))}`,
       minimal: `.s-minimal{--ic:var(--c1);background:none;box-shadow:none;overflow:visible;border-color:transparent}
         .s-minimal ha-icon{--mdc-icon-size:${m.minimalIcon}px}`,
     };
@@ -956,7 +1030,7 @@ class LauncherCard extends HTMLElement {
       ha-card{${c.card_background ? "" : "background:none;box-shadow:none;border:none;"}overflow:hidden}
       .pages{display:flex}
       .page{flex:0 0 100%;min-width:0;box-sizing:border-box}
-      .grid{display:grid;${gridCols}margin:${pad}px;justify-items:center;justify-content:${justify};${c.icon_color ? `--glob-ic:${css(c.icon_color)};` : ""}}
+      .grid{display:grid;${gridCols}${gridBox}justify-items:center;justify-content:${justify};${c.icon_color ? `--glob-ic:${css(c.icon_color)};` : ""}}
       .empty{text-align:center;color:var(--secondary-text-color);font-size:14px;margin:-4px ${pad}px ${pad}px}
       .empty[hidden],.dots[hidden]{display:none}`);
 
@@ -1437,6 +1511,9 @@ class LauncherColorPicker extends HTMLElement {
               border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.4); }
         .side { display:flex; flex-direction:column; gap:8px; flex:1; min-width:0; font-size:12px; color:var(--secondary-text-color); }
         input[type=range] { width:100%; accent-color:var(--primary-color); }
+        .alpha-row { display:flex; flex-direction:column; gap:8px; }
+        .alpha-row[hidden] { display:none; }
+        :host([alpha]) .hex { width:150px; }
       </style>
       <div class="row">
         <button class="sw" title="Open color wheel"></button>
@@ -1446,7 +1523,8 @@ class LauncherColorPicker extends HTMLElement {
       </div>
       <div class="panel" hidden>
         <div class="wheel"><canvas width="320" height="320"></canvas><div class="mk"></div></div>
-        <div class="side">Brightness<input class="val" type="range" min="0" max="100"></div>
+        <div class="side">Brightness<input class="val" type="range" min="0" max="100">
+          <div class="alpha-row" hidden>Opacity<input class="alp" type="range" min="0" max="100"></div></div>
       </div>`;
 
     const $ = (s) => this.shadowRoot.querySelector(s);
@@ -1456,6 +1534,12 @@ class LauncherColorPicker extends HTMLElement {
     this._canvas = $("canvas");
     this._mk = $(".mk");
     this._val = $(".val");
+    this._alp = $(".alp");
+    this._alpha = 1;
+    this._alp.addEventListener("input", () => {
+      this._alpha = this._alp.value / 100;
+      this._emit(this._out());
+    });
 
     this._sw.addEventListener("click", () => {
       this._panel.hidden = !this._panel.hidden;
@@ -1464,13 +1548,13 @@ class LauncherColorPicker extends HTMLElement {
     $(".clr").addEventListener("click", () => this._emit(""));
     this._hex.addEventListener("input", () => {
       const v = this._hex.value.trim();
-      if (v === "" || hexToRgb(v)) this._emit(v, true);
+      if (v === "" || parseRgba(v)) this._emit(v, true);
     });
     this._hex.addEventListener("change", () => this._emit(this._hex.value.trim(), true));
     this._val.addEventListener("input", () => {
       this._hsv[2] = this._val.value / 100;
       this._drawWheel();
-      this._emit(rgbToHex(hsvToRgb(...this._hsv)));
+      this._emit(this._out());
     });
 
     const wheel = $(".wheel");
@@ -1484,7 +1568,7 @@ class LauncherColorPicker extends HTMLElement {
       this._hsv = [h, s, this._hsv[2]];
       this._val.value = Math.round(this._hsv[2] * 100);
       this._drawWheel();
-      this._emit(rgbToHex(hsvToRgb(...this._hsv)));
+      this._emit(this._out());
     };
     wheel.addEventListener("pointerdown", (e) => {
       this._dragging = true;
@@ -1508,6 +1592,18 @@ class LauncherColorPicker extends HTMLElement {
     this._hex.placeholder = t;
   }
 
+  set alpha(on) {
+    this._alphaOn = !!on;
+    this.toggleAttribute("alpha", this._alphaOn);
+    this.shadowRoot.querySelector(".alpha-row").hidden = !this._alphaOn;
+  }
+
+  _out() {
+    const rgb = hsvToRgb(...this._hsv).map((x) => Math.round(x));
+    const a = this._alphaOn ? Math.round(this._alpha * 100) / 100 : 1;
+    return a < 1 ? `rgba(${rgb.join(", ")}, ${a})` : rgbToHex(rgb);
+  }
+
   set open(v) {
     this._panel.hidden = !v;
     if (v) this._drawWheel();
@@ -1521,20 +1617,27 @@ class LauncherColorPicker extends HTMLElement {
     v = css(v) || "";
     if (this._dragging || v === this._value) return;
     this._value = v;
-    const rgb = hexToRgb(v);
-    if (rgb) this._hsv = rgbToHsv(rgb);
+    this._fromValue(v);
     this._paint(this.shadowRoot.activeElement !== this._hex);
+  }
+
+  _fromValue(v) {
+    const c = parseRgba(v);
+    if (!c) return;
+    this._hsv = rgbToHsv(c.slice(0, 3));
+    this._alpha = c[3];
   }
 
   _paint(updateText) {
     if (updateText) this._hex.value = this._value;
     this._sw.style.setProperty("--sw", this._value || "transparent");
     this._val.value = Math.round(this._hsv[2] * 100);
+    this._alp.value = Math.round(this._alpha * 100);
     const [h, s] = this._hsv;
     const a = (h * Math.PI) / 180;
     this._mk.style.left = `${80 + Math.cos(a) * s * 80}px`;
     this._mk.style.top = `${80 + Math.sin(a) * s * 80}px`;
-    this._mk.style.background = hexToRgb(this._value) ? this._value : "transparent";
+    this._mk.style.background = parseRgba(this._value) ? this._value : "transparent";
     if (!this._panel.hidden) this._drawWheel();
   }
 
@@ -1570,8 +1673,7 @@ class LauncherColorPicker extends HTMLElement {
 
   _emit(v, fromText) {
     this._value = v;
-    const rgb = fromText && hexToRgb(v);
-    if (rgb) this._hsv = rgbToHsv(rgb);
+    if (fromText) this._fromValue(v);
     this._paint(!fromText);
     this._pending = v;
     if (this._raf) return;
@@ -1625,9 +1727,10 @@ const GENERAL_SCHEMAS = {
     ),
     grid(
       { name: "columns_mode", label: "Columns", selector: { select: { mode: "dropdown", options: opt({ auto: "Auto-fit", fixed: "Fixed" }) } } },
-      { name: "columns_count", label: "Apps per row", selector: { number: { min: 1, max: 12, mode: "box" } } },
+      { name: "columns_count", label: "Apps per row (fixed)", selector: { number: { min: 1, max: 12, mode: "box" } } },
+      { name: "max_columns", label: "Max apps per row (auto-fit, empty = no limit)", selector: { number: { min: 1, max: 24, mode: "box" } } },
       { name: "badge_size", label: "Badge size (px)", selector: { number: { min: 24, max: 160, mode: "box" } } },
-      { name: "icon_size", label: "Icon size (px, empty = auto)", selector: { number: { min: 8, max: 160, mode: "box" } } },
+      { name: "icon_percent", label: "Icon size (% of badge, empty = auto)", selector: { number: { min: 10, max: 100, step: 1, mode: "box", unit_of_measurement: "%" } } },
       { name: "gap", label: "Spacing (px)", selector: { number: { min: 0, max: 60, mode: "box" } } },
       { name: "align", label: "Grid alignment", selector: { select: { mode: "dropdown", options: opt({ start: "Left", center: "Center", end: "Right" }) } } },
       { name: "card_padding", label: "Card padding (px)", selector: { number: { min: 0, max: 48, mode: "box" } } }
@@ -1647,7 +1750,7 @@ const GENERAL_SCHEMAS = {
   badges: [
     { name: "badge_style", label: "Badge style", selector: { select: { mode: "dropdown", options: opt(BADGE_STYLES) } } },
     grid(
-      { name: "radius_mode", label: "Rounding", selector: { select: { mode: "dropdown", options: opt({ theme: "Follow theme", fixed: "Fixed value", circle: "Circle" }) } } },
+      { name: "radius_mode", label: "Rounding", selector: { select: { mode: "dropdown", options: opt({ theme: "Follow theme", fixed: "Fixed value" }) } } },
       { name: "radius_value", label: "Rounding (px)", selector: { number: { min: 0, max: 64, mode: "box" } } },
       { name: "gradient_type", label: "Gradient type", selector: { select: { mode: "dropdown", options: opt({ linear: "Linear", radial: "Radial", conic: "Conic", diamond: "Mirrored" }) } } },
       { name: "gradient_angle", label: "Gradient angle", selector: { number: { min: 0, max: 360, mode: "box" } } },
@@ -1803,6 +1906,7 @@ class LauncherCardEditor extends HTMLElement {
     }
     if (c.press_animation === true) c.press_animation = "shrink";
     if (c.press_animation === false) c.press_animation = "none";
+    if (c.icon_percent === undefined && Number(c.icon_size) > 0) c.icon_percent = Math.round((Number(c.icon_size) / num(c.badge_size, 60)) * 100);
     const r = c.border_radius;
     return {
       ...DEFAULTS,
@@ -1811,8 +1915,8 @@ class LauncherCardEditor extends HTMLElement {
       columns_count: typeof c.columns === "number" ? c.columns : Number(c.columns) || 4,
       rows_mode: c.rows_per_page === undefined || c.rows_per_page === "auto" ? "auto" : "fixed",
       rows_count: typeof c.rows_per_page === "number" ? c.rows_per_page : Number(c.rows_per_page) || 3,
-      radius_mode: r === undefined || r === "theme" ? "theme" : r === "circle" ? "circle" : "fixed",
-      radius_value: typeof r === "number" ? r : Number(r) || 16,
+      radius_mode: r === undefined || r === "theme" ? "theme" : "fixed",
+      radius_value: typeof r === "number" ? r : r === "circle" ? Math.round(num(c.badge_size, 60) / 2) : Number(r) || 16,
     };
   }
 
@@ -1836,7 +1940,7 @@ class LauncherCardEditor extends HTMLElement {
     }
     if (keys.includes("badge_size")) {
       next.badge_size = Number(v.badge_size) || DEFAULTS.badge_size;
-      if (v.icon_size === undefined || v.icon_size === "") delete next.icon_size;
+      if (v.icon_percent !== undefined && v.icon_percent !== "") delete next.icon_size;
     }
     if (keys.includes("columns_mode")) next.columns = v.columns_mode === "auto" ? "auto" : Number(v.columns_count) || 4;
     if (keys.includes("rows_mode")) next.rows_per_page = v.rows_mode === "auto" ? "auto" : Number(v.rows_count) || 3;
@@ -1886,6 +1990,7 @@ class LauncherCardEditor extends HTMLElement {
       else delete next[key];
       this._emit(next);
     });
+    p.alpha = true;
     this._globalPickers[key] = p;
     return p;
   }
@@ -2100,6 +2205,7 @@ class LauncherCardEditor extends HTMLElement {
         this._setApp(i, app);
       });
       if (key === "color" || key === "color2") pickers[key].open = true;
+      else pickers[key].alpha = true;
       return pickers[key];
     });
     panels.colors.append(this._section("Presets", presetsEl), this._section("Custom", ...pickerEls));
