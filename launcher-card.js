@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.5";
+const CARD_VERSION = "0.2.6";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -71,6 +71,8 @@ const DEFAULTS = {
   badge_border: 0,
   card_padding: 16,
   sort: "none",
+  pages: false,
+  rows_per_page: "auto",
   appear_animation: "rise",
   appear_order: "sequence",
   appear_trigger: "load",
@@ -279,6 +281,13 @@ class LauncherCard extends HTMLElement {
       };
     }
     window.addEventListener("launcher-card-replay", this._onReplay);
+    if (!this._onResize) {
+      this._onResize = () => {
+        cancelAnimationFrame(this._resizeRaf);
+        this._resizeRaf = requestAnimationFrame(() => this._layout());
+      };
+    }
+    window.addEventListener("resize", this._onResize);
     this._played = false;
     this._maybeAppear();
   }
@@ -289,6 +298,7 @@ class LauncherCard extends HTMLElement {
     this._io = null;
     clearTimeout(this._appearTimer);
     window.removeEventListener("launcher-card-replay", this._onReplay);
+    window.removeEventListener("resize", this._onResize);
     SEARCH_CARDS.delete(this);
   }
 
@@ -444,7 +454,8 @@ class LauncherCard extends HTMLElement {
     const bar = root.querySelector(".search");
     if (bar) bar.classList.toggle("has", q.length > 0);
     root.querySelector(".empty").hidden = shown > 0 || !this._els.length;
-    if (words.length) requestAnimationFrame(() => this._layout());
+    this._paginate();
+    requestAnimationFrame(() => this._layout());
   }
 
   _captureKey(e) {
@@ -478,14 +489,18 @@ class LauncherCard extends HTMLElement {
 
   _layout() {
     if (!this.shadowRoot || !this._config) return;
-    const grid = this.shadowRoot.querySelector(".grid");
-    if (!grid) return;
+    this._paginate();
+    const grids = this.shadowRoot.querySelectorAll(".grid");
+    if (!grids.length) return;
     const m = this._metrics();
     const cols = this._fixedCols();
     if (cols) {
-      const pitch = grid.clientWidth / cols;
-      const gap = `${Math.max(4, Math.round(pitch - m.cellH))}px`;
-      if (grid.style.rowGap !== gap) grid.style.rowGap = gap;
+      for (const grid of grids) {
+        const pitch = grid.clientWidth / cols;
+        if (!pitch) continue;
+        const gap = `${Math.max(4, Math.round(pitch - m.cellH))}px`;
+        if (grid.style.rowGap !== gap) grid.style.rowGap = gap;
+      }
     }
     if (this._config.name_overflow !== "scroll") return;
     const speed = Math.max(5, num(this._config.marquee_speed, 30));
@@ -506,6 +521,107 @@ class LauncherCard extends HTMLElement {
         n.classList.remove("marquee");
       }
     }
+  }
+
+  _paginate() {
+    const root = this.shadowRoot;
+    const pagesEl = root && root.querySelector(".pages");
+    if (!pagesEl || !this._els) return;
+    const c = this._config;
+    const live = this._els.filter((x) => !x.el.classList.contains("filtered"));
+    const hidden = this._els.filter((x) => x.el.classList.contains("filtered"));
+    let chunks = [live];
+    const width = pagesEl.clientWidth;
+    if (c.pages && width > 0) {
+      const m = this._metrics();
+      const W = Math.max(1, width - 2 * m.pad);
+      const fixed = this._fixedCols();
+      const cols = fixed || Math.max(1, Math.floor((W + m.gap) / (m.cellH + m.gap)));
+      const rowPitch = fixed ? Math.max(m.cellH + 4, W / cols) : m.cellH + m.gap;
+      let rows;
+      if (c.rows_per_page === "auto" || c.rows_per_page === undefined || c.rows_per_page === "") {
+        const top = Math.min(Math.max(pagesEl.getBoundingClientRect().top, 0), window.innerHeight * 0.5);
+        const avail = window.innerHeight - top - 2 * m.pad - 28;
+        rows = Math.max(1, Math.floor((avail + (rowPitch - m.cellH)) / rowPitch));
+      } else rows = Math.max(1, Math.round(num(c.rows_per_page, 3)));
+      const per = cols * rows;
+      chunks = [];
+      for (let i = 0; i < live.length; i += per) chunks.push(live.slice(i, i + per));
+      if (!chunks.length) chunks = [[]];
+    }
+
+    let pages = [...pagesEl.children];
+    while (pages.length < chunks.length) {
+      const page = document.createElement("div");
+      page.className = "page";
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      const first = pages[0].firstElementChild;
+      if (first.style.rowGap) grid.style.rowGap = first.style.rowGap;
+      page.appendChild(grid);
+      pagesEl.appendChild(page);
+      pages.push(page);
+    }
+    while (pages.length > chunks.length) pages.pop().remove();
+
+    chunks.forEach((chunk, p) => {
+      const grid = pages[p].firstElementChild;
+      chunk.forEach(({ el }, k) => {
+        if (grid.children[k] !== el) grid.insertBefore(el, grid.children[k] || null);
+      });
+    });
+    const lastGrid = pages[pages.length - 1].firstElementChild;
+    for (const { el } of hidden) if (el.parentElement !== lastGrid) lastGrid.appendChild(el);
+
+    this._pageCount = chunks.length;
+    this._buildDots(pagesEl);
+  }
+
+  _buildDots(pagesEl) {
+    const dots = this.shadowRoot.querySelector(".dots");
+    const n = this._pageCount;
+    if (!dots) return;
+    const show = this._config.pages && n > 1;
+    dots.hidden = !show;
+    if (!pagesEl._scrollBound) {
+      pagesEl._scrollBound = true;
+      pagesEl.addEventListener(
+        "scroll",
+        () => {
+          const w = pagesEl.clientWidth;
+          if (!w) return;
+          const idx = Math.round(pagesEl.scrollLeft / w);
+          if (idx !== this._page) {
+            this._page = idx;
+            this._markDots();
+          }
+        },
+        { passive: true }
+      );
+    }
+    if (!show) {
+      this._page = 0;
+      return;
+    }
+    if (dots.children.length !== n) {
+      dots.textContent = "";
+      for (let i = 0; i < n; i++) {
+        const b = document.createElement("button");
+        b.className = "dot";
+        b.setAttribute("aria-label", `Page ${i + 1}`);
+        b.addEventListener("click", () => pagesEl.scrollTo({ left: i * pagesEl.clientWidth, behavior: "smooth" }));
+        dots.appendChild(b);
+      }
+    }
+    this._page = Math.min(this._page || 0, n - 1);
+    const left = this._page * pagesEl.clientWidth;
+    if (Math.abs(pagesEl.scrollLeft - left) > 1) pagesEl.scrollLeft = left;
+    this._markDots();
+  }
+
+  _markDots() {
+    const dots = this.shadowRoot.querySelector(".dots");
+    if (dots) [...dots.children].forEach((d, i) => d.classList.toggle("active", i === (this._page || 0)));
   }
 
   _fixedCols() {
@@ -576,6 +692,16 @@ class LauncherCard extends HTMLElement {
                color:${css(c.title_color) || "var(--primary-text-color)"}; }
       .grid { display:grid; ${grid} margin:${pad}px; justify-items:center; justify-content:${justify};
               ${c.icon_color ? `--glob-ic:${css(c.icon_color)};` : ""} }
+      .pages { display:flex; }
+      .pages.paged { overflow-x:auto; scroll-snap-type:x mandatory; scrollbar-width:none; overscroll-behavior-x:contain; }
+      .pages.paged::-webkit-scrollbar { display:none; }
+      .page { flex:0 0 100%; min-width:0; box-sizing:border-box; scroll-snap-align:start; scroll-snap-stop:always; }
+      .dots { display:flex; justify-content:center; align-items:center; gap:8px; padding:0 0 ${Math.max(10, pad)}px; }
+      .dots[hidden] { display:none; }
+      .dot { width:8px; height:8px; padding:0; border:none; border-radius:4px; cursor:pointer; flex:none;
+             background:color-mix(in srgb, var(--primary-text-color) 28%, transparent);
+             transition:width .25s ease, background .25s ease; }
+      .dot.active { width:20px; background:${css(c.dots_color) || "var(--primary-color)"}; }
       .search { margin:${pad}px ${pad}px 0; display:flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 12px; box-sizing:border-box;
                 border-radius:20px; color:var(--secondary-text-color); --mdc-icon-size:20px; cursor:text;
                 background:color-mix(in srgb, var(--primary-text-color) 7%, transparent);
@@ -796,7 +922,8 @@ class LauncherCard extends HTMLElement {
         ${c.search ? `<label class="search"><ha-icon icon="mdi:magnify"></ha-icon>
           <input type="search" autocomplete="off" spellcheck="false" enterkeyhint="go">
           <button class="clear" title="Clear"><ha-icon icon="mdi:close"></ha-icon></button></label>` : ""}
-        <div class="grid"></div>
+        <div class="pages${c.pages ? " paged" : ""}"><div class="page"><div class="grid"></div></div></div>
+        <div class="dots" hidden></div>
         <div class="empty" hidden>No apps found</div>
       </ha-card>`;
     if (c.title) this.shadowRoot.querySelector(".title").textContent = c.title;
@@ -885,7 +1012,9 @@ class LauncherCard extends HTMLElement {
       this._els.push({ app, el, notify, haystack: normalize(`${app.name || ""} ${app.keywords || ""}`) });
     });
 
+    this._page = Math.min(this._page || 0, 999);
     this._setupSearch();
+    this._paginate();
     this._update(true);
     this._maybeAppear();
     requestAnimationFrame(() => this._layout());
@@ -999,7 +1128,7 @@ class LauncherCard extends HTMLElement {
   }
 
   _moveFocus(el, key) {
-    const list = this._els.map((x) => x.el).filter((e) => !e.classList.contains("filtered"));
+    const list = this._els.map((x) => x.el).filter((e) => e.parentElement === el.parentElement && !e.classList.contains("filtered"));
     const i = list.indexOf(el);
     if (i < 0) return;
     const top = list[0].offsetTop;
@@ -1264,7 +1393,7 @@ class LauncherColorPicker extends HTMLElement {
 }
 
 
-const HELPER_KEYS = ["columns_mode", "columns_count", "radius_mode", "radius_value"];
+const HELPER_KEYS = ["columns_mode", "columns_count", "radius_mode", "radius_value", "rows_mode", "rows_count"];
 const COLOR_KEYS = ["color", "color2", "badge_color", "icon_color", "notify_color"];
 
 const opt = (o) => Object.entries(o).map(([value, label]) => ({ value, label }));
@@ -1306,6 +1435,11 @@ const GENERAL_SCHEMAS = {
       { name: "gap", label: "Spacing (px)", selector: { number: { min: 0, max: 60, mode: "box" } } },
       { name: "align", label: "Grid alignment", selector: { select: { mode: "dropdown", options: opt({ start: "Left", center: "Center", end: "Right" }) } } },
       { name: "card_padding", label: "Card padding (px)", selector: { number: { min: 0, max: 48, mode: "box" } } }
+    ),
+    grid(
+      { name: "pages", label: "Split into pages", selector: { boolean: {} } },
+      { name: "rows_mode", label: "Rows per page", selector: { select: { mode: "dropdown", options: opt({ auto: "Auto-fit to screen", fixed: "Fixed" }) } } },
+      { name: "rows_count", label: "Rows", selector: { number: { min: 1, max: 12, mode: "box" } } }
     ),
     { name: "card_background", label: "Card background", selector: { boolean: {} } },
     grid(
@@ -1475,6 +1609,8 @@ class LauncherCardEditor extends HTMLElement {
       ...c,
       columns_mode: c.columns === undefined || c.columns === "auto" ? "auto" : "fixed",
       columns_count: typeof c.columns === "number" ? c.columns : Number(c.columns) || 4,
+      rows_mode: c.rows_per_page === undefined || c.rows_per_page === "auto" ? "auto" : "fixed",
+      rows_count: typeof c.rows_per_page === "number" ? c.rows_per_page : Number(c.rows_per_page) || 3,
       radius_mode: r === undefined || r === "theme" ? "theme" : r === "circle" ? "circle" : "fixed",
       radius_value: typeof r === "number" ? r : Number(r) || 16,
     };
@@ -1503,6 +1639,7 @@ class LauncherCardEditor extends HTMLElement {
       if (v.icon_size === undefined || v.icon_size === "") delete next.icon_size;
     }
     if (keys.includes("columns_mode")) next.columns = v.columns_mode === "auto" ? "auto" : Number(v.columns_count) || 4;
+    if (keys.includes("rows_mode")) next.rows_per_page = v.rows_mode === "auto" ? "auto" : Number(v.rows_count) || 3;
     if (keys.includes("radius_mode")) next.border_radius = v.radius_mode === "fixed" ? Number(v.radius_value) || 0 : v.radius_mode;
     this._emit(next);
     this._syncVisibility();
