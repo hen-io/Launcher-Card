@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.3";
+const CARD_VERSION = "0.2.4";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -582,6 +582,9 @@ class LauncherCard extends HTMLElement {
                 box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--primary-text-color) 8%, transparent);
                 transition:box-shadow .2s ease, background .2s ease; }
       .search:focus-within { box-shadow:inset 0 0 0 2px var(--primary-color); background:color-mix(in srgb, var(--primary-text-color) 4%, transparent); }
+      /* The app icon rule below also matches ha-icon here, so the bar's icons must be sized explicitly. */
+      .search ha-icon { --mdc-icon-size:20px; width:20px; height:20px; color:inherit; filter:none; flex:none; }
+      .search .clear ha-icon { --mdc-icon-size:18px; width:18px; height:18px; }
       .search input { flex:1; min-width:0; height:100%; border:none; outline:none; background:none; padding:0;
                       font:inherit; font-size:15px; color:var(--primary-text-color); }
       .search input::placeholder { color:var(--secondary-text-color); opacity:1; }
