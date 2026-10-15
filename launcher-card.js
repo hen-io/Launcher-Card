@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.1";
+const CARD_VERSION = "0.5.1";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -19,7 +19,16 @@ const BADGE_STYLES = {
   gradient: "Gradient",
   aurora: "Aurora (mesh gradient)",
   glass: "Glass",
+  liquid: "Liquid glass (clear)",
+  liquid_tint: "Liquid glass (tinted)",
+  liquid_dark: "Liquid glass (smoked)",
+  bubble: "Glass bubble",
   clay: "Clay (soft 3D)",
+  inflated: "Inflated (puffy 3D)",
+  bevel: "Bevel (raised 3D button)",
+  orb: "Orb (glossy 3D)",
+  chrome: "Chrome (metal 3D)",
+  soft: "Soft UI (neumorphic)",
   tinted: "Tinted",
   dark: "Dark",
   neon: "Neon",
@@ -48,10 +57,14 @@ const DEFAULTS = {
   show_names: true,
   name_size: 12,
   name_overflow: "scroll",
-  dock_names: false,
+  search: false,
+  search_type_anywhere: true,
   active_indicator: true,
   dim_unavailable: true,
-  press_animation: true,
+  hover_animation: "lift",
+  press_animation: "shrink",
+  name_shadow: false,
+  name_shadow_blur: 3,
   haptic: true,
   card_background: true,
 };
@@ -111,13 +124,63 @@ function extractColors(src) {
   return p;
 }
 
+const css = (v) => (Array.isArray(v) ? `rgb(${v.slice(0, 3).join(",")})` : v);
+
 function appColors(app) {
   const preset = PRESETS[app.badge_color] || PRESETS[app.color];
   if (preset) return preset;
-  const c1 = app.color || app.badge_color;
-  if (c1) return [c1, app.color2 || c1];
+  const c1 = css(app.color || app.badge_color);
+  if (c1) return [c1, css(app.color2) || c1];
   return null;
 }
+
+function hexToRgb(h) {
+  let s = String(h || "").trim().replace(/^#/, "");
+  if (s.length === 3) s = s.split("").map((x) => x + x).join("");
+  if (!/^[0-9a-f]{6}$/i.test(s)) {
+    const m = String(h || "").match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    return m ? [+m[1], +m[2], +m[3]] : null;
+  }
+  return [0, 2, 4].map((i) => parseInt(s.slice(i, i + 2), 16));
+}
+const rgbToHex = (rgb) => "#" + rgb.map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
+function rgbToHsv([r, g, b]) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), d = mx - Math.min(r, g, b);
+  let h = 0;
+  if (d) {
+    if (mx === r) h = ((g - b) / d) % 6;
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return [h, mx ? d / mx : 0, mx];
+}
+function hsvToRgb(h, s, v) {
+  const f = (n) => {
+    const k = (n + h / 60) % 6;
+    return (v - v * s * Math.max(0, Math.min(k, 4 - k, 1))) * 255;
+  };
+  return [f(5), f(3), f(1)];
+}
+
+const normalize = (s) => String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+const SEARCH_CARDS = new Set();
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (!SEARCH_CARDS.size || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+    if (e.key.length !== 1 || e.key === " ") return;
+    const busy = e.composedPath().some(
+      (n) => n.nodeType === 1 && (/^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName) || n.isContentEditable || n.tagName.includes("DIALOG"))
+    );
+    if (busy) return;
+    for (const card of SEARCH_CARDS) if (card._captureKey(e)) return;
+  },
+  true
+);
 
 class LauncherCard extends HTMLElement {
   static getStubConfig() {
@@ -144,6 +207,8 @@ class LauncherCard extends HTMLElement {
       c.badge_size = config.icon_size;
       delete c.icon_size;
     }
+    if (c.press_animation === true) c.press_animation = "shrink";
+    if (c.press_animation === false) c.press_animation = "none";
     this._config = c;
     this._render();
   }
@@ -151,10 +216,83 @@ class LauncherCard extends HTMLElement {
   connectedCallback() {
     if (!this._ro) this._ro = new ResizeObserver(() => this._layout());
     this._ro.observe(this);
+    this._registerTyping();
   }
 
   disconnectedCallback() {
     if (this._ro) this._ro.disconnect();
+    SEARCH_CARDS.delete(this);
+  }
+
+  _registerTyping() {
+    const c = this._config;
+    if (this.isConnected && c && c.search && c.search_type_anywhere) SEARCH_CARDS.add(this);
+    else SEARCH_CARDS.delete(this);
+  }
+
+  _setupSearch() {
+    this._registerTyping();
+    const input = this.shadowRoot.querySelector(".search input");
+    this._searchInput = input;
+    if (!input) {
+      this._query = "";
+      return;
+    }
+    const bar = input.parentElement;
+    input.placeholder = this._config.search_placeholder || (this._config.search_type_anywhere ? "Type to search apps" : "Search apps");
+    input.value = this._query || "";
+    input.addEventListener("input", () => this._filter(input.value));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        input.value = "";
+        this._filter("");
+        input.blur();
+      } else if (e.key === "Enter") {
+        const first = this._els.find((x) => !x.el.classList.contains("filtered"));
+        if (first && this._query) this._act(first.app, "tap");
+      }
+    });
+    bar.querySelector(".clear").addEventListener("click", (e) => {
+      e.preventDefault();
+      input.value = "";
+      this._filter("");
+      input.focus();
+    });
+    this._filter(input.value);
+  }
+
+  _filter(q) {
+    this._query = q;
+    const words = normalize(q).split(/\s+/).filter(Boolean);
+    let first = true, shown = 0;
+    for (const { el, haystack } of this._els) {
+      const hit = words.every((w) => haystack.includes(w));
+      el.classList.toggle("filtered", !hit);
+      el.classList.toggle("first", hit && first);
+      if (hit) {
+        first = false;
+        shown++;
+      }
+    }
+    const root = this.shadowRoot;
+    root.querySelector("ha-card").classList.toggle("searching", words.length > 0);
+    const bar = root.querySelector(".search");
+    if (bar) bar.classList.toggle("has", q.length > 0);
+    root.querySelector(".empty").hidden = shown > 0 || !this._els.length;
+    if (words.length) requestAnimationFrame(() => this._layout());
+  }
+
+  _captureKey(e) {
+    const input = this._searchInput;
+    if (!input || !this.isConnected) return false;
+    const r = this.getBoundingClientRect();
+    if (!r.width || r.bottom < 0 || r.top > window.innerHeight) return false;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    input.focus({ preventScroll: true });
+    input.value += e.key;
+    this._filter(input.value);
+    return true;
   }
 
   _metrics() {
@@ -245,7 +383,6 @@ class LauncherCard extends HTMLElement {
       ? `grid-template-columns:repeat(${cols}, minmax(0, 1fr)); column-gap:0; row-gap:${m.gap}px;`
       : `grid-template-columns:repeat(auto-fit, ${m.cellH}px); gap:${m.gap}px;`;
     const justify = { start: "start", end: "end", center: "center" }[c.align] || "center";
-    const dockCell = c.dock_names ? m.cellH : size;
     const outer = c.shadow
       ? "0 6px 14px -5px color-mix(in srgb, var(--c2) 65%, rgba(0,0,0,.55)), 0 2px 4px rgba(0,0,0,.18)"
       : "0 0 #0000";
@@ -255,14 +392,25 @@ class LauncherCard extends HTMLElement {
       ha-card { ${c.card_background ? "" : "background:none;box-shadow:none;border:none;"} overflow:hidden; }
       .title { padding:16px 16px 0; font-size:var(--ha-card-header-font-size, 20px); font-weight:500; color:var(--primary-text-color); }
       .grid { display:grid; ${grid} margin:16px; justify-items:center; justify-content:${justify};
-              ${c.icon_color ? `--glob-ic:${c.icon_color};` : ""} }
-      .dock { margin:0 12px 12px; padding:12px; border-radius:calc(${this._radius()} + 10px);
-              display:grid; grid-auto-flow:column; grid-auto-columns:${dockCell}px; gap:${m.gap}px; justify-content:center;
-              background:color-mix(in srgb, var(--primary-text-color) 7%, transparent);
-              backdrop-filter:blur(18px) saturate(160%); -webkit-backdrop-filter:blur(18px) saturate(160%);
-              box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--primary-text-color) 8%, transparent);
-              ${c.icon_color ? `--glob-ic:${c.icon_color};` : ""} }
-      .dock[hidden] { display:none; }
+              ${c.icon_color ? `--glob-ic:${css(c.icon_color)};` : ""} }
+      .search { margin:16px 16px 0; display:flex; align-items:center; gap:8px; height:40px; padding:0 8px 0 12px; box-sizing:border-box;
+                border-radius:20px; color:var(--secondary-text-color); --mdc-icon-size:20px; cursor:text;
+                background:color-mix(in srgb, var(--primary-text-color) 7%, transparent);
+                box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+                transition:box-shadow .2s ease, background .2s ease; }
+      .search:focus-within { box-shadow:inset 0 0 0 2px var(--primary-color); background:color-mix(in srgb, var(--primary-text-color) 4%, transparent); }
+      .search input { flex:1; min-width:0; height:100%; border:none; outline:none; background:none; padding:0;
+                      font:inherit; font-size:15px; color:var(--primary-text-color); }
+      .search input::placeholder { color:var(--secondary-text-color); opacity:1; }
+      .search input::-webkit-search-cancel-button { display:none; }
+      .search .clear { display:none; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:none;
+                       border-radius:50%; background:none; color:inherit; cursor:pointer; --mdc-icon-size:18px; }
+      .search .clear:hover { background:color-mix(in srgb, var(--primary-text-color) 10%, transparent); }
+      .search.has .clear { display:flex; }
+      .app.filtered { display:none; }
+      .searching .app.first .badge { outline:2px solid color-mix(in srgb, var(--primary-color) 70%, transparent); outline-offset:3px; }
+      .empty { text-align:center; color:var(--secondary-text-color); font-size:14px; margin:-4px 16px 16px; }
+      .empty[hidden] { display:none; }
       .app { display:flex; flex-direction:column; align-items:center; gap:${m.labelGap}px; width:100%; min-width:0;
              cursor:pointer; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
              -webkit-tap-highlight-color:transparent; outline:none; touch-action:manipulation; }
@@ -297,17 +445,66 @@ class LauncherCard extends HTMLElement {
       .s-neon { --ic:var(--c1); background:radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--c1) 22%, #0d0f14) 0%, #0a0b0f 75%);
                 box-shadow:inset 0 0 0 1.5px var(--c1), inset 0 0 14px color-mix(in srgb, var(--c1) 40%, transparent),
                            0 0 16px -3px color-mix(in srgb, var(--c1) 75%, transparent); }
-      .s-neon ha-icon { filter:var(--ish) drop-shadow(0 0 6px var(--c1)); }
+      .s-neon ha-icon { filter:var(--ish) drop-shadow(0 0 2px color-mix(in srgb, currentColor 45%, #000))
+                                         drop-shadow(0 0 7px color-mix(in srgb, currentColor 55%, #000)); }
       .s-flat { background:var(--c1); }
       .s-minimal { --ic:var(--c1); background:none; box-shadow:none; overflow:visible; }
 
-      ${c.shine ? `.s-gradient::after, .s-aurora::after, .s-flat::after, .s-glass::after, .s-clay::after {
+      /* ---- liquid glass ---- */
+      .badge::before { position:absolute; inset:0; pointer-events:none; border-radius:inherit; }
+      .s-liquid, .s-liquid_tint, .s-liquid_dark, .s-bubble {
+        --rim:inset 1.5px 1.5px 1px rgba(255,255,255,.7), inset -1px -1px 1px rgba(255,255,255,.3),
+              inset 0 0 0 1px rgba(255,255,255,.16), inset 0 0 0 .5px color-mix(in srgb, var(--primary-text-color) 18%, transparent),
+              inset 0 0 14px rgba(255,255,255,.14);
+        --glass-outer:${c.shadow ? "0 10px 22px -10px rgba(0,0,0,.45), 0 2px 5px -2px rgba(0,0,0,.2)" : "0 0 #0000"};
+        backdrop-filter:blur(10px) saturate(190%) brightness(1.08); -webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.08);
+        box-shadow:var(--glass-outer), var(--rim); }
+      .s-liquid { --ic:var(--c1);
+        background:radial-gradient(95% 60% at 50% 112%, color-mix(in srgb, var(--c1) 50%, transparent) 0%, transparent 72%),
+                   linear-gradient(var(--ang), rgba(255,255,255,.26), rgba(255,255,255,.05) 60%, rgba(255,255,255,.12)); }
+      .s-liquid_tint {
+        background:radial-gradient(80% 55% at 22% 10%, rgba(255,255,255,.38) 0%, transparent 60%),
+                   radial-gradient(90% 60% at 60% 115%, color-mix(in srgb, var(--c1) 70%, #fff) 0%, transparent 70%),
+                   linear-gradient(var(--ang), color-mix(in srgb, var(--c1) 72%, transparent), color-mix(in srgb, var(--c2) 58%, transparent)); }
+      .s-liquid_dark { --ic:color-mix(in srgb, var(--c1) 82%, #fff);
+        background:radial-gradient(95% 60% at 50% 115%, color-mix(in srgb, var(--c1) 42%, transparent) 0%, transparent 70%),
+                   linear-gradient(180deg, rgba(48,50,58,.55), rgba(14,15,19,.72)); }
+      .s-bubble { --ic:var(--c1);
+        background:radial-gradient(circle at 50% 125%, color-mix(in srgb, var(--c1) 75%, transparent) 0%, transparent 62%),
+                   radial-gradient(circle at 50% 50%, transparent 55%, color-mix(in srgb, var(--c2) 22%, transparent) 100%),
+                   color-mix(in srgb, var(--c1) 10%, transparent); }
+      .s-liquid::before, .s-liquid_tint::before, .s-liquid_dark::before {
+        content:""; inset:2px 3px 48% 3px; border-radius:inherit; opacity:.9;
+        background:linear-gradient(180deg, rgba(255,255,255,.42), rgba(255,255,255,0)); }
+      .s-bubble::before { content:""; inset:7% 22% 58% 16%; border-radius:50%; transform:rotate(-12deg);
+        background:linear-gradient(180deg, rgba(255,255,255,.8), rgba(255,255,255,0)); }
+
+      /* ---- 3D ---- */
+      .s-inflated { background:linear-gradient(var(--ang), color-mix(in srgb, var(--c1) 80%, #fff), var(--c2));
+        box-shadow:var(--outer), inset 0 9px 12px -5px rgba(255,255,255,.65),
+                   inset 0 -11px 14px -5px color-mix(in srgb, var(--c2) 50%, #000),
+                   inset 7px 0 10px -7px rgba(255,255,255,.4), inset -7px 0 10px -7px rgba(0,0,0,.3); }
+      .s-bevel { background:linear-gradient(180deg, color-mix(in srgb, var(--c1) 80%, #fff), var(--c1) 45%, var(--c2));
+        box-shadow:inset 0 1.5px 0 rgba(255,255,255,.6), inset 0 -3px 0 color-mix(in srgb, var(--c2) 70%, #000),
+                   0 4px 0 color-mix(in srgb, var(--c2) 55%, #000), ${c.shadow ? "0 8px 10px -2px rgba(0,0,0,.35)" : "0 0 #0000"}; }
+      .s-orb { background:radial-gradient(circle at 32% 26%, color-mix(in srgb, var(--c1) 40%, #fff) 0%, var(--c1) 28%,
+                                          var(--c2) 70%, color-mix(in srgb, var(--c2) 55%, #000) 100%);
+        box-shadow:var(--outer), inset 0 -6px 12px color-mix(in srgb, var(--c2) 50%, rgba(0,0,0,.5)), inset 0 2px 3px rgba(255,255,255,.35); }
+      .s-orb::before { content:""; inset:5% 20% 55% 20%; border-radius:50%;
+        background:linear-gradient(180deg, rgba(255,255,255,.75), rgba(255,255,255,0)); }
+      .s-chrome { --ic:var(--c2);
+        background:linear-gradient(180deg, #f6f8fa 0%, #d2d7de 44%, #a3aab4 50%, #c8cdd4 62%, #eef1f4 100%);
+        box-shadow:var(--outer), inset 0 1px 0 #fff, inset 0 -1px 1px rgba(0,0,0,.3), inset 0 0 0 1px rgba(0,0,0,.14); }
+      .s-chrome ha-icon { filter:var(--ish) drop-shadow(0 1px 0 rgba(255,255,255,.8)); }
+      .s-soft { --ic:var(--c1); --bg:var(--card-background-color, #fff); overflow:visible;
+        background:linear-gradient(145deg, color-mix(in srgb, var(--bg) 92%, #fff), color-mix(in srgb, var(--bg) 92%, #000));
+        box-shadow:5px 5px 11px color-mix(in srgb, var(--bg) 72%, #000), -5px -5px 11px color-mix(in srgb, var(--bg) 82%, #fff); }
+
+      ${c.shine ? `.s-gradient::after, .s-aurora::after, .s-flat::after, .s-glass::after, .s-clay::after, .s-inflated::after, .s-bevel::after {
                      background:linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,255,255,0) 52%); }` : ""}
 
       .app:focus-visible .badge { outline:2px solid var(--primary-color); outline-offset:3px; }
-      ${c.press_animation ? ".app.pressed .badge, .app:active .badge { transform:scale(.88); filter:brightness(.88); }" : ""}
-      @media (hover:hover) { .app:hover .badge { transform:translateY(-2px); }
-        ${c.press_animation ? ".app:active:hover .badge { transform:scale(.88); }" : ""} }
+      ${this._animStyles()}
 
       ha-icon { --mdc-icon-size:${m.icon}px; display:flex; position:relative; z-index:1;
                 color:var(--app-ic, var(--glob-ic, var(--ic))); filter:var(--ish); }
@@ -329,7 +526,8 @@ class LauncherCard extends HTMLElement {
       .app.unavail .badge { filter:grayscale(1); opacity:.45; }
 
       .name { font-size:${Number(c.name_size) || 12}px; line-height:${m.lineH}px; height:${m.lineH * (c.name_overflow === "wrap" ? 2 : 1)}px;
-              width:100%; text-align:center; overflow:hidden; color:${c.name_color || "var(--primary-text-color)"}; }
+              width:100%; text-align:center; overflow:hidden; color:${css(c.name_color) || "var(--primary-text-color)"}; }
+      ${c.name_shadow ? `.name { text-shadow:0 1px ${Math.max(0, Number(c.name_shadow_blur) || 0)}px ${css(c.name_shadow_color) || "rgba(0,0,0,.65)"}; }` : ""}
       .track { display:inline-block; max-width:100%; white-space:nowrap; }
       .t { display:inline-block; white-space:nowrap; }
       .t.clone { display:none; padding-left:24px; }
@@ -351,6 +549,51 @@ class LauncherCard extends HTMLElement {
     `;
   }
 
+  _animStyles() {
+    const c = this._config;
+    const spring = "cubic-bezier(.3,.7,.4,1.4)";
+    const hover = {
+      lift: ".app:hover .badge { translate:0 -3px; }",
+      grow: ".app:hover .badge { scale:1.08; }",
+      tilt: `.app:hover .badge { transform:perspective(${(Number(c.badge_size) || 60) * 4}px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+               scale:1.05; transition-duration:.08s, .25s, .25s, .25s, .2s, .2s, .2s; }`,
+      glow: ".app:hover .badge { translate:0 -1px; filter:drop-shadow(0 0 10px color-mix(in srgb, var(--c1) 75%, transparent)); }",
+      wiggle: ".app:hover .badge { animation:lc-wiggle .45s ease; }",
+      float: ".app:hover .badge { animation:lc-float 1.8s ease-in-out infinite; }",
+    }[c.hover_animation] || "";
+    const press = {
+      shrink: ".app.pressed .badge { scale:.88; filter:brightness(.9); }",
+      push: ".app.pressed .badge { translate:0 3px; scale:.95; filter:brightness(.92); }",
+      spring: `.badge { transition-timing-function:${spring}, cubic-bezier(.2,.9,.3,1.9), cubic-bezier(.2,.9,.3,1.9), ease, ease, ease, ease;
+                        transition-duration:.18s, .45s, .45s, .25s, .2s, .2s, .2s; }
+               .app.pressed .badge { scale:.8; translate:0 0; transition-duration:.1s; }`,
+      jelly: ".app.tapped .badge { animation:lc-jelly .5s ease; }",
+      ripple: `.app.pressed .badge { scale:.94; }
+               .app.tapped .wrap::after { animation:lc-ripple .6s ease-out; }`,
+    }[c.press_animation] || "";
+    const physical = c.press_animation && c.press_animation !== "none"
+      ? `.app.pressed .s-bevel { translate:0 3px; scale:1;
+           box-shadow:inset 0 1.5px 0 rgba(255,255,255,.6), inset 0 -2px 0 color-mix(in srgb, var(--c2) 70%, #000),
+                      0 1px 0 color-mix(in srgb, var(--c2) 55%, #000); }
+         .app.pressed .s-soft { translate:0 0; scale:1;
+           box-shadow:inset 4px 4px 8px color-mix(in srgb, var(--bg) 72%, #000), inset -4px -4px 8px color-mix(in srgb, var(--bg) 82%, #fff); }`
+      : "";
+    return `
+      .badge { transition-property:transform, translate, scale, rotate, filter, opacity, box-shadow;
+               transition-duration:.18s, .25s, .25s, .25s, .2s, .2s, .2s;
+               transition-timing-function:${spring}, ${spring}, ${spring}, ease, ease, ease, ease; }
+      .wrap::after { content:""; position:absolute; inset:0; border-radius:${this._radius()}; pointer-events:none; opacity:0; }
+      @media (hover:hover) { ${hover} }
+      ${press}
+      ${physical}
+      @keyframes lc-wiggle { 0%, 100% { rotate:0deg; } 25% { rotate:-7deg; } 50% { rotate:5deg; } 75% { rotate:-3deg; } }
+      @keyframes lc-float { 0%, 100% { translate:0 0; } 50% { translate:0 -5px; } }
+      @keyframes lc-jelly { 0% { scale:1; } 30% { scale:1.16 .84; } 50% { scale:.9 1.1; } 70% { scale:1.05 .95; } 100% { scale:1; } }
+      @keyframes lc-ripple { 0% { opacity:1; box-shadow:0 0 0 0 color-mix(in srgb, var(--c1) 70%, transparent); }
+                             100% { opacity:0; box-shadow:0 0 0 16px color-mix(in srgb, var(--c1) 0%, transparent); } }
+      @media (prefers-reduced-motion: reduce) { .badge { animation:none !important; } }`;
+  }
+
   _render() {
     const c = this._config;
     if (!c) return;
@@ -360,19 +603,20 @@ class LauncherCard extends HTMLElement {
       <style>${this._styles()}</style>
       <ha-card>
         ${c.title ? `<div class="title"></div>` : ""}
+        ${c.search ? `<label class="search"><ha-icon icon="mdi:magnify"></ha-icon>
+          <input type="search" autocomplete="off" spellcheck="false" enterkeyhint="go">
+          <button class="clear" title="Clear"><ha-icon icon="mdi:close"></ha-icon></button></label>` : ""}
         <div class="grid"></div>
-        <div class="dock" hidden></div>
+        <div class="empty" hidden>No apps found</div>
       </ha-card>`;
     if (c.title) this.shadowRoot.querySelector(".title").textContent = c.title;
 
     const gridEl = this.shadowRoot.querySelector(".grid");
-    const dockEl = this.shadowRoot.querySelector(".dock");
     const style = BADGE_STYLES[c.badge_style] ? c.badge_style : "gradient";
     this._els = [];
 
     c.apps.forEach((app) => {
       if (!this._visible(app)) return;
-      const inDock = !!app.dock;
       const el = document.createElement("div");
       el.className = "app";
       el.tabIndex = 0;
@@ -386,8 +630,8 @@ class LauncherCard extends HTMLElement {
       badge.className = `badge s-${style}`;
       const colors = appColors(app);
       const setColors = (cc) => {
-        badge.style.setProperty("--c1", cc[0]);
-        badge.style.setProperty("--c2", cc[1]);
+        el.style.setProperty("--c1", cc[0]);
+        el.style.setProperty("--c2", cc[1]);
       };
       setColors(colors || PRESETS.blue);
 
@@ -406,14 +650,14 @@ class LauncherCard extends HTMLElement {
       } else if (app.icon) {
         const ic = document.createElement("ha-icon");
         ic.setAttribute("icon", app.icon);
-        if (app.icon_color) ic.style.setProperty("--app-ic", app.icon_color);
+        if (app.icon_color) ic.style.setProperty("--app-ic", css(app.icon_color));
         badge.appendChild(ic);
       }
       wrap.appendChild(badge);
 
       const notify = document.createElement("div");
       notify.className = "notify";
-      if (app.notify_color) notify.style.setProperty("--notify-color", app.notify_color);
+      if (app.notify_color) notify.style.setProperty("--notify-color", css(app.notify_color));
       wrap.appendChild(notify);
 
       if (c.active_indicator && app.entity) {
@@ -423,8 +667,7 @@ class LauncherCard extends HTMLElement {
       }
       el.appendChild(wrap);
 
-      const showName = inDock ? c.dock_names : c.show_names;
-      if (showName) {
+      if (c.show_names) {
         const n = document.createElement("div");
         n.className = "name";
         const track = document.createElement("span");
@@ -441,11 +684,11 @@ class LauncherCard extends HTMLElement {
       }
 
       this._bindActions(el, app);
-      (inDock ? dockEl : gridEl).appendChild(el);
-      this._els.push({ app, el, notify });
+      gridEl.appendChild(el);
+      this._els.push({ app, el, notify, haystack: normalize(`${app.name || ""} ${app.keywords || ""}`) });
     });
 
-    dockEl.hidden = !dockEl.children.length;
+    this._setupSearch();
     this._update();
     requestAnimationFrame(() => this._layout());
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this._layout());
@@ -498,11 +741,34 @@ class LauncherCard extends HTMLElement {
     ["pointerup", "pointerleave", "pointercancel"].forEach((t) => el.addEventListener(t, cancel));
     el.addEventListener("contextmenu", (e) => has("hold_action") && e.preventDefault());
 
+    if (this._config.hover_animation === "tilt") {
+      const badge = el.querySelector(".badge");
+      el.addEventListener("pointermove", (e) => {
+        if (e.pointerType !== "mouse") return;
+        const r = badge.getBoundingClientRect();
+        const x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5;
+        badge.style.setProperty("--ry", `${(x * 22).toFixed(1)}deg`);
+        badge.style.setProperty("--rx", `${(-y * 22).toFixed(1)}deg`);
+      });
+      el.addEventListener("pointerleave", () => {
+        badge.style.removeProperty("--rx");
+        badge.style.removeProperty("--ry");
+      });
+    }
+
+    const tapped = () => {
+      el.classList.remove("tapped");
+      void el.offsetWidth;
+      el.classList.add("tapped");
+    };
+    el.addEventListener("animationend", () => el.classList.remove("tapped"));
+
     el.addEventListener("click", () => {
       if (held) {
         held = false;
         return;
       }
+      tapped();
       if (has("double_tap_action")) {
         if (tapTimer) {
           clearTimeout(tapTimer);
@@ -590,12 +856,326 @@ class LauncherCard extends HTMLElement {
 }
 
 
+class LauncherColorPicker extends HTMLElement {
+  constructor() {
+    super();
+    this._value = "";
+    this._hsv = [0, 0, 1];
+    this._drawnV = null;
+    this.attachShadow({ mode: "open" }).innerHTML = `
+      <style>
+        :host { display:block; }
+        .row { display:flex; align-items:center; gap:10px; min-height:40px; }
+        .sw { width:32px; height:32px; border-radius:50%; flex:none; cursor:pointer; padding:0; position:relative;
+              border:2px solid var(--card-background-color, #fff); box-shadow:0 0 0 1px var(--divider-color);
+              background:repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0/10px 10px; }
+        .sw::after { content:""; position:absolute; inset:0; border-radius:50%; background:var(--sw, transparent); }
+        .lbl { flex:1; min-width:0; font-size:14px; color:var(--primary-text-color); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .hex { width:96px; box-sizing:border-box; padding:6px 8px; font:13px monospace; border-radius:6px;
+               border:1px solid var(--divider-color); background:var(--card-background-color, #fff); color:var(--primary-text-color); }
+        .clr { border:none; background:none; cursor:pointer; color:var(--secondary-text-color); font-size:18px; width:28px; height:28px;
+               border-radius:50%; padding:0; line-height:1; }
+        .clr:hover { background:var(--secondary-background-color); }
+        .panel { display:flex; align-items:center; gap:16px; padding:10px 0 6px 4px; }
+        .panel[hidden] { display:none; }
+        .wheel { position:relative; width:160px; height:160px; flex:none; touch-action:none; cursor:crosshair; }
+        canvas { width:160px; height:160px; border-radius:50%; display:block; }
+        .mk { position:absolute; width:16px; height:16px; margin:-8px 0 0 -8px; border-radius:50%; pointer-events:none;
+              border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.4); }
+        .side { display:flex; flex-direction:column; gap:8px; flex:1; min-width:0; font-size:12px; color:var(--secondary-text-color); }
+        input[type=range] { width:100%; accent-color:var(--primary-color); }
+      </style>
+      <div class="row">
+        <button class="sw" title="Open color wheel"></button>
+        <div class="lbl"></div>
+        <input class="hex" spellcheck="false" placeholder="auto">
+        <button class="clr" title="Clear">×</button>
+      </div>
+      <div class="panel" hidden>
+        <div class="wheel"><canvas width="320" height="320"></canvas><div class="mk"></div></div>
+        <div class="side">Brightness<input class="val" type="range" min="0" max="100"></div>
+      </div>`;
+
+    const $ = (s) => this.shadowRoot.querySelector(s);
+    this._sw = $(".sw");
+    this._hex = $(".hex");
+    this._panel = $(".panel");
+    this._canvas = $("canvas");
+    this._mk = $(".mk");
+    this._val = $(".val");
+
+    this._sw.addEventListener("click", () => {
+      this._panel.hidden = !this._panel.hidden;
+      if (!this._panel.hidden) this._drawWheel();
+    });
+    $(".clr").addEventListener("click", () => this._emit(""));
+    this._hex.addEventListener("input", () => {
+      const v = this._hex.value.trim();
+      if (v === "" || hexToRgb(v)) this._emit(v, true);
+    });
+    this._hex.addEventListener("change", () => this._emit(this._hex.value.trim(), true));
+    this._val.addEventListener("input", () => {
+      this._hsv[2] = this._val.value / 100;
+      this._drawWheel();
+      this._emit(rgbToHex(hsvToRgb(...this._hsv)));
+    });
+
+    const wheel = $(".wheel");
+    const pick = (e) => {
+      const r = wheel.getBoundingClientRect();
+      const dx = e.clientX - r.left - r.width / 2, dy = e.clientY - r.top - r.height / 2;
+      let h = (Math.atan2(dy, dx) * 180) / Math.PI;
+      if (h < 0) h += 360;
+      const s = Math.min(1, Math.hypot(dx, dy) / (r.width / 2));
+      if (this._hsv[2] < 0.05) this._hsv[2] = 1;
+      this._hsv = [h, s, this._hsv[2]];
+      this._val.value = Math.round(this._hsv[2] * 100);
+      this._drawWheel();
+      this._emit(rgbToHex(hsvToRgb(...this._hsv)));
+    };
+    wheel.addEventListener("pointerdown", (e) => {
+      this._dragging = true;
+      wheel.setPointerCapture(e.pointerId);
+      pick(e);
+    });
+    wheel.addEventListener("pointermove", (e) => this._dragging && pick(e));
+    const end = () => {
+      this._dragging = false;
+      this._flush();
+    };
+    wheel.addEventListener("pointerup", end);
+    wheel.addEventListener("pointercancel", end);
+  }
+
+  set label(t) {
+    this.shadowRoot.querySelector(".lbl").textContent = t;
+  }
+
+  set placeholder(t) {
+    this._hex.placeholder = t;
+  }
+
+  get value() {
+    return this._value;
+  }
+
+  set value(v) {
+    v = css(v) || "";
+    if (this._dragging || v === this._value) return;
+    this._value = v;
+    const rgb = hexToRgb(v);
+    if (rgb) this._hsv = rgbToHsv(rgb);
+    this._paint(this.shadowRoot.activeElement !== this._hex);
+  }
+
+  _paint(updateText) {
+    if (updateText) this._hex.value = this._value;
+    this._sw.style.setProperty("--sw", this._value || "transparent");
+    this._val.value = Math.round(this._hsv[2] * 100);
+    const [h, s] = this._hsv;
+    const a = (h * Math.PI) / 180;
+    this._mk.style.left = `${80 + Math.cos(a) * s * 80}px`;
+    this._mk.style.top = `${80 + Math.sin(a) * s * 80}px`;
+    this._mk.style.background = hexToRgb(this._value) ? this._value : "transparent";
+    if (!this._panel.hidden) this._drawWheel();
+  }
+
+  _drawWheel() {
+    const v = this._hsv[2];
+    if (this._drawnV === v) return;
+    this._drawnV = v;
+    const size = this._canvas.width, R = size / 2;
+    const ctx = this._canvas.getContext("2d");
+    const img = ctx.createImageData(size, size);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const dx = x - R + 0.5, dy = y - R + 0.5, d = Math.hypot(dx, dy);
+        if (d > R) continue;
+        let h = (Math.atan2(dy, dx) * 180) / Math.PI;
+        if (h < 0) h += 360;
+        const [r, g, b] = hsvToRgb(h, d / R, v);
+        const i = (y * size + x) * 4;
+        img.data[i] = r; img.data[i + 1] = g; img.data[i + 2] = b;
+        img.data[i + 3] = Math.min(1, R - d) * 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  _emit(v, fromText) {
+    this._value = v;
+    const rgb = fromText && hexToRgb(v);
+    if (rgb) this._hsv = rgbToHsv(rgb);
+    this._paint(!fromText);
+    this._pending = v;
+    if (this._raf) return;
+    this._raf = requestAnimationFrame(() => this._flush());
+  }
+
+  _flush() {
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null;
+    if (this._pending === undefined) return;
+    const value = this._pending;
+    this._pending = undefined;
+    this.dispatchEvent(new CustomEvent("color-changed", { detail: { value } }));
+  }
+}
+
+
 const HELPER_KEYS = ["columns_mode", "columns_count", "radius_mode", "radius_value"];
+const COLOR_KEYS = ["color", "color2", "badge_color", "icon_color", "notify_color"];
+
+const opt = (o) => Object.entries(o).map(([value, label]) => ({ value, label }));
+const grid = (...schema) => ({ type: "grid", name: "", schema });
+const schemaKeys = (schema) => schema.flatMap((s) => (s.schema ? schemaKeys(s.schema) : [s.name]));
+
+const HOVER_ANIMATIONS = { none: "None", lift: "Lift", grow: "Grow", tilt: "3D tilt (follows pointer)", glow: "Glow", wiggle: "Wiggle", float: "Float" };
+const PRESS_ANIMATIONS = { none: "None", shrink: "Shrink", push: "Push down", spring: "Spring", jelly: "Jelly", ripple: "Ripple" };
+
+const EDITOR_TABS = [
+  { id: "apps", label: "Apps", icon: "mdi:apps" },
+  { id: "layout", label: "Layout", icon: "mdi:view-grid-outline" },
+  { id: "badges", label: "Badges", icon: "mdi:palette-outline" },
+  { id: "names", label: "Names", icon: "mdi:format-text" },
+  { id: "effects", label: "Effects", icon: "mdi:creation-outline" },
+];
+
+const APP_TABS = [
+  { id: "general", label: "General" },
+  { id: "colors", label: "Colors" },
+  { id: "entity", label: "Entity" },
+  { id: "actions", label: "Actions" },
+];
+
+const GENERAL_SCHEMAS = {
+  layout: [
+    { name: "title", label: "Title", selector: { text: {} } },
+    grid(
+      { name: "columns_mode", label: "Columns", selector: { select: { mode: "dropdown", options: opt({ auto: "Auto-fit", fixed: "Fixed" }) } } },
+      { name: "columns_count", label: "Apps per row", selector: { number: { min: 1, max: 12, mode: "box" } } },
+      { name: "badge_size", label: "Badge size (px)", selector: { number: { min: 24, max: 160, mode: "box" } } },
+      { name: "icon_size", label: "Icon size (px, empty = auto)", selector: { number: { min: 8, max: 160, mode: "box" } } },
+      { name: "gap", label: "Spacing (px)", selector: { number: { min: 0, max: 60, mode: "box" } } },
+      { name: "align", label: "Alignment", selector: { select: { mode: "dropdown", options: opt({ start: "Left", center: "Center", end: "Right" }) } } }
+    ),
+    { name: "card_background", label: "Card background", selector: { boolean: {} } },
+    grid(
+      { name: "search", label: "Search bar", selector: { boolean: {} } },
+      { name: "search_type_anywhere", label: "Type anywhere to search", selector: { boolean: {} } }
+    ),
+    { name: "search_placeholder", label: "Search placeholder text", selector: { text: {} } },
+  ],
+  badges: [
+    { name: "badge_style", label: "Badge style", selector: { select: { mode: "dropdown", options: opt(BADGE_STYLES) } } },
+    grid(
+      { name: "radius_mode", label: "Rounding", selector: { select: { mode: "dropdown", options: opt({ theme: "Follow theme", fixed: "Fixed value", circle: "Circle" }) } } },
+      { name: "radius_value", label: "Rounding (px)", selector: { number: { min: 0, max: 64, mode: "box" } } },
+      { name: "gradient_angle", label: "Gradient angle", selector: { number: { min: 0, max: 360, mode: "box" } } },
+      { name: "icon_shadow", label: "Icon shadow", selector: { select: { mode: "dropdown", options: opt({ none: "None", soft: "Soft", medium: "Medium", strong: "Strong" }) } } },
+      { name: "shine", label: "Glossy highlight", selector: { boolean: {} } },
+      { name: "shadow", label: "Badge shadow", selector: { boolean: {} } }
+    ),
+  ],
+  names: [
+    grid(
+      { name: "show_names", label: "Show names", selector: { boolean: {} } },
+      { name: "name_size", label: "Text size (px)", selector: { number: { min: 8, max: 24, mode: "box" } } },
+      { name: "name_overflow", label: "Long names", selector: { select: { mode: "dropdown", options: opt({ scroll: "Scroll (marquee)", ellipsis: "Cut off (…)", wrap: "Wrap to 2 lines" }) } } },
+      { name: "name_shadow", label: "Text shadow", selector: { boolean: {} } },
+      { name: "name_shadow_blur", label: "Shadow blur (px)", selector: { number: { min: 0, max: 12, mode: "box" } } }
+    ),
+  ],
+  effects: [
+    grid(
+      { name: "hover_animation", label: "Hover animation", selector: { select: { mode: "dropdown", options: opt(HOVER_ANIMATIONS) } } },
+      { name: "press_animation", label: "Press animation", selector: { select: { mode: "dropdown", options: opt(PRESS_ANIMATIONS) } } },
+      { name: "haptic", label: "Haptic feedback", selector: { boolean: {} } },
+      { name: "active_indicator", label: "Active entity dot", selector: { boolean: {} } },
+      { name: "dim_unavailable", label: "Dim unavailable", selector: { boolean: {} } }
+    ),
+  ],
+};
+
+const APP_SCHEMAS = {
+  general: [
+    { name: "name", label: "Name", selector: { text: {} } },
+    grid(
+      { name: "icon", label: "Icon", selector: { icon: {} } },
+      { name: "image", label: "Image URL (replaces icon)", selector: { text: {} } }
+    ),
+    { name: "path", label: "Navigation path or URL", selector: { text: {} } },
+    { name: "keywords", label: "Search keywords (optional)", selector: { text: {} } },
+    grid(
+      { name: "new_tab", label: "Open in new tab", selector: { boolean: {} } },
+      { name: "fill", label: "Image fills badge", selector: { boolean: {} } },
+      { name: "hidden", label: "Hidden", selector: { boolean: {} } }
+    ),
+  ],
+  entity: [
+    { name: "entity", label: "Entity (state dot, more-info, toggle)", selector: { entity: {} } },
+    { name: "notify_entity", label: "Notification badge entity (count or on/off)", selector: { entity: {} } },
+  ],
+  actions: [
+    { name: "tap_action", label: "Tap (overrides path)", selector: { ui_action: {} } },
+    { name: "hold_action", label: "Hold", selector: { ui_action: {} } },
+    { name: "double_tap_action", label: "Double tap", selector: { ui_action: {} } },
+  ],
+};
+
+const EDITOR_CSS = `
+  .ver { text-align:right; line-height:1.25; margin-bottom:8px; }
+  .ver .n { font-weight:500; color:var(--primary-text-color); }
+  .ver .v { font-size:12px; color:var(--secondary-text-color); }
+  .tabs { display:flex; gap:2px; border-bottom:1px solid var(--divider-color); margin-bottom:14px; overflow-x:auto; scrollbar-width:none; }
+  .tabs::-webkit-scrollbar { display:none; }
+  .tab { flex:1 0 auto; display:flex; align-items:center; justify-content:center; gap:6px; padding:10px 12px; cursor:pointer;
+         border:none; background:none; color:var(--secondary-text-color); font:inherit; font-size:14px; font-weight:500;
+         border-bottom:2px solid transparent; margin-bottom:-1px; --mdc-icon-size:18px; white-space:nowrap; }
+  .tab:hover { color:var(--primary-text-color); }
+  .tab.active { color:var(--primary-color); border-bottom-color:var(--primary-color); }
+  .subtabs { display:flex; gap:6px; margin:0 0 12px; flex-wrap:wrap; }
+  .subtab { border:1px solid var(--divider-color); background:none; color:var(--secondary-text-color); border-radius:16px;
+            padding:5px 12px; font:inherit; font-size:13px; cursor:pointer; }
+  .subtab.active { background:var(--primary-color); border-color:var(--primary-color); color:var(--text-primary-color, #fff); }
+  [hidden] { display:none !important; }
+  .section { margin:16px 0 4px; }
+  .sub-title { font-weight:500; font-size:14px; margin:4px 0 6px; color:var(--primary-text-color); }
+  .hint { font-size:12px; color:var(--secondary-text-color); margin:12px 0 4px; }
+  details.app-box { border:1px solid var(--divider-color); border-radius:var(--ha-card-border-radius, 12px); margin:8px 0; overflow:hidden; }
+  details.app-box[open] > summary { border-bottom:1px solid var(--divider-color); }
+  summary { list-style:none; display:flex; align-items:center; gap:10px; padding:8px 10px; cursor:pointer; user-select:none; }
+  summary::-webkit-details-marker { display:none; }
+  .chev { transition:transform .2s ease; color:var(--secondary-text-color); --mdc-icon-size:20px; display:flex; }
+  details[open] .chev { transform:rotate(90deg); }
+  .chip { width:28px; height:28px; border-radius:8px; flex:none; display:flex; align-items:center; justify-content:center;
+          background:linear-gradient(145deg, var(--c1, #4facfe), var(--c2, #1d5fe0)); color:#fff; --mdc-icon-size:18px; overflow:hidden; }
+  .chip img { width:70%; height:70%; object-fit:contain; }
+  .label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
+  .label small { display:block; font-weight:400; font-size:11px; color:var(--secondary-text-color); overflow:hidden; text-overflow:ellipsis; }
+  .btns { display:flex; gap:2px; }
+  .btns button { cursor:pointer; border:none; background:none; border-radius:50%; width:32px; height:32px; padding:0;
+                 color:var(--secondary-text-color); display:flex; align-items:center; justify-content:center; --mdc-icon-size:20px; }
+  .btns button:hover:not(:disabled) { background:var(--secondary-background-color); color:var(--primary-text-color); }
+  .btns button:disabled { opacity:.3; cursor:default; }
+  .body { padding:10px 12px 12px; }
+  .presets { display:flex; flex-wrap:wrap; gap:8px; margin:4px 0 10px; }
+  .preset { width:30px; height:30px; border-radius:9px; border:none; padding:0; cursor:pointer; flex:none;
+            background:linear-gradient(145deg, var(--c1), var(--c2)); box-shadow:0 1px 3px rgba(0,0,0,.25);
+            outline-offset:2px; transition:transform .15s ease; }
+  .preset:hover { transform:scale(1.1); }
+  .preset.active { outline:2px solid var(--primary-color); }
+  .preset.auto { background:var(--secondary-background-color); color:var(--secondary-text-color); font-size:10px; font-weight:600; }
+  .add { cursor:pointer; border:none; border-radius:var(--ha-card-border-radius, 12px); padding:10px 14px; margin-top:8px; width:100%;
+         background:var(--primary-color); color:var(--text-primary-color, #fff); font-weight:500; font-size:14px; }`;
 
 class LauncherCardEditor extends HTMLElement {
   constructor() {
     super();
     this._open = new Set();
+    this._tab = "apps";
+    this._appTab = new Map();
+    this._root = this.attachShadow({ mode: "open" });
   }
 
   setConfig(config) {
@@ -607,175 +1187,12 @@ class LauncherCardEditor extends HTMLElement {
 
   set hass(h) {
     this._hass = h;
-    this.querySelectorAll("ha-form").forEach((f) => (f.hass = h));
+    this._root.querySelectorAll("ha-form").forEach((f) => (f.hass = h));
   }
 
   _emit(config) {
     this._config = config;
     this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
-  }
-
-  _generalSchema() {
-    const opt = (o) => Object.entries(o).map(([value, label]) => ({ value, label }));
-    return [
-      { name: "title", selector: { text: {} } },
-      {
-        type: "expandable",
-        name: "",
-        flatten: true,
-        title: "Layout",
-        icon: "mdi:view-grid-outline",
-        schema: [
-          {
-            type: "grid",
-            name: "",
-            schema: [
-              { name: "columns_mode", label: "Columns", selector: { select: { mode: "dropdown", options: opt({ auto: "Auto-fit", fixed: "Fixed" }) } } },
-              { name: "columns_count", label: "Apps per row", selector: { number: { min: 1, max: 12, mode: "box" } } },
-              { name: "badge_size", label: "Badge size (px)", selector: { number: { min: 24, max: 160, mode: "box" } } },
-              { name: "icon_size", label: "Icon size (px, empty = auto)", selector: { number: { min: 8, max: 160, mode: "box" } } },
-              { name: "gap", label: "Row gap (px)", selector: { number: { min: 0, max: 60, mode: "box" } } },
-              { name: "align", label: "Alignment", selector: { select: { mode: "dropdown", options: opt({ start: "Left", center: "Center", end: "Right" }) } } },
-              { name: "card_background", label: "Card background", selector: { boolean: {} } },
-            ],
-          },
-        ],
-      },
-      {
-        type: "expandable",
-        name: "",
-        flatten: true,
-        title: "Badges",
-        icon: "mdi:palette-outline",
-        schema: [
-          { name: "badge_style", label: "Badge style", selector: { select: { mode: "dropdown", options: opt(BADGE_STYLES) } } },
-          {
-            type: "grid",
-            name: "",
-            schema: [
-              { name: "radius_mode", label: "Rounding", selector: { select: { mode: "dropdown", options: opt({ theme: "Follow theme", fixed: "Fixed value", circle: "Circle" }) } } },
-              { name: "radius_value", label: "Rounding (px)", selector: { number: { min: 0, max: 64, mode: "box" } } },
-              { name: "gradient_angle", label: "Gradient angle", selector: { number: { min: 0, max: 360, mode: "box" } } },
-              { name: "icon_color", label: "Icon color (all apps)", selector: { text: {} } },
-              { name: "icon_shadow", label: "Icon shadow", selector: { select: { mode: "dropdown", options: opt({ none: "None", soft: "Soft", medium: "Medium", strong: "Strong" }) } } },
-              { name: "shine", label: "Glossy highlight", selector: { boolean: {} } },
-              { name: "shadow", label: "Badge shadow", selector: { boolean: {} } },
-            ],
-          },
-        ],
-      },
-      {
-        type: "expandable",
-        name: "",
-        flatten: true,
-        title: "Names",
-        icon: "mdi:format-text",
-        schema: [
-          {
-            type: "grid",
-            name: "",
-            schema: [
-              { name: "show_names", label: "Show names", selector: { boolean: {} } },
-              { name: "dock_names", label: "Show names in dock", selector: { boolean: {} } },
-              { name: "name_size", label: "Name size (px)", selector: { number: { min: 8, max: 24, mode: "box" } } },
-              {
-                name: "name_overflow",
-                label: "Long names",
-                selector: { select: { mode: "dropdown", options: opt({ scroll: "Scroll (marquee)", ellipsis: "Cut off (…)", wrap: "Wrap to 2 lines" }) } },
-              },
-              { name: "name_color", label: "Name color", selector: { text: {} } },
-            ],
-          },
-        ],
-      },
-      {
-        type: "expandable",
-        name: "",
-        flatten: true,
-        title: "Behaviour",
-        icon: "mdi:gesture-tap",
-        schema: [
-          {
-            type: "grid",
-            name: "",
-            schema: [
-              { name: "press_animation", label: "Press animation", selector: { boolean: {} } },
-              { name: "haptic", label: "Haptic feedback", selector: { boolean: {} } },
-              { name: "active_indicator", label: "Active entity dot", selector: { boolean: {} } },
-              { name: "dim_unavailable", label: "Dim unavailable", selector: { boolean: {} } },
-            ],
-          },
-        ],
-      },
-    ];
-  }
-
-  _appSchema() {
-    return [
-      { name: "name", label: "Name", selector: { text: {} } },
-      {
-        type: "grid",
-        name: "",
-        schema: [
-          { name: "icon", label: "Icon", selector: { icon: {} } },
-          { name: "image", label: "Image URL (replaces icon)", selector: { text: {} } },
-        ],
-      },
-      { name: "path", label: "Navigation path or URL", selector: { text: {} } },
-      {
-        type: "grid",
-        name: "",
-        schema: [
-          {
-            name: "color",
-            label: "Badge color",
-            selector: {
-              select: {
-                mode: "dropdown",
-                custom_value: true,
-                options: [{ value: "", label: "Auto (from logo)" }, ...PRESET_NAMES.map((p) => ({ value: p, label: p[0].toUpperCase() + p.slice(1) }))],
-              },
-            },
-          },
-          { name: "color2", label: "Second color", selector: { text: {} } },
-          { name: "icon_color", label: "Icon color", selector: { text: {} } },
-          { name: "notify_color", label: "Notification color", selector: { text: {} } },
-        ],
-      },
-      {
-        type: "expandable",
-        name: "",
-        flatten: true,
-        title: "Entity & notifications",
-        icon: "mdi:bell-badge-outline",
-        schema: [
-          { name: "entity", label: "Entity (state dot, more-info, toggle)", selector: { entity: {} } },
-          { name: "notify_entity", label: "Notification badge entity (count or on/off)", selector: { entity: {} } },
-        ],
-      },
-      {
-        type: "expandable",
-        name: "",
-        flatten: true,
-        title: "Actions",
-        icon: "mdi:gesture-tap-hold",
-        schema: [
-          { name: "tap_action", label: "Tap (overrides path)", selector: { ui_action: {} } },
-          { name: "hold_action", label: "Hold", selector: { ui_action: {} } },
-          { name: "double_tap_action", label: "Double tap", selector: { ui_action: {} } },
-        ],
-      },
-      {
-        type: "grid",
-        name: "",
-        schema: [
-          { name: "new_tab", label: "Open in new tab", selector: { boolean: {} } },
-          { name: "dock", label: "Place in dock", selector: { boolean: {} } },
-          { name: "fill", label: "Image fills badge", selector: { boolean: {} } },
-          { name: "hidden", label: "Hidden", selector: { boolean: {} } },
-        ],
-      },
-    ];
   }
 
   _flat() {
@@ -784,6 +1201,8 @@ class LauncherCardEditor extends HTMLElement {
       c.badge_size = c.icon_size;
       delete c.icon_size;
     }
+    if (c.press_animation === true) c.press_animation = "shrink";
+    if (c.press_animation === false) c.press_animation = "none";
     const r = c.border_radius;
     return {
       ...DEFAULTS,
@@ -804,19 +1223,23 @@ class LauncherCardEditor extends HTMLElement {
     return d;
   }
 
-  _onGeneral(v) {
+  _onGeneral(v, keys) {
     const next = { ...this._config };
-    for (const [k, val] of Object.entries(v)) {
-      if (HELPER_KEYS.includes(k) || k === "apps" || k === "type") continue;
+    for (const k of keys) {
+      if (HELPER_KEYS.includes(k)) continue;
+      const val = v[k];
       if (val === undefined || val === "") delete next[k];
       else if (!(k in this._config) && DEFAULTS[k] === val) continue;
       else next[k] = val;
     }
-    next.badge_size = Number(v.badge_size) || DEFAULTS.badge_size;
-    if (v.icon_size === undefined || v.icon_size === "") delete next.icon_size;
-    next.columns = v.columns_mode === "auto" ? "auto" : Number(v.columns_count) || 4;
-    next.border_radius = v.radius_mode === "fixed" ? Number(v.radius_value) || 0 : v.radius_mode;
+    if (keys.includes("badge_size")) {
+      next.badge_size = Number(v.badge_size) || DEFAULTS.badge_size;
+      if (v.icon_size === undefined || v.icon_size === "") delete next.icon_size;
+    }
+    if (keys.includes("columns_mode")) next.columns = v.columns_mode === "auto" ? "auto" : Number(v.columns_count) || 4;
+    if (keys.includes("radius_mode")) next.border_radius = v.radius_mode === "fixed" ? Number(v.radius_value) || 0 : v.radius_mode;
     this._emit(next);
+    this._syncVisibility();
   }
 
   _setApps(apps, structural) {
@@ -825,62 +1248,109 @@ class LauncherCardEditor extends HTMLElement {
     if (structural) this.setConfig(next);
   }
 
+  _setApp(i, app) {
+    const apps = [...this._config.apps];
+    apps[i] = app;
+    this._setApps(apps, false);
+    this._syncRow(i, true);
+  }
+
+  _form(schema, onChange) {
+    const f = document.createElement("ha-form");
+    f.hass = this._hass;
+    f.schema = schema;
+    f.computeLabel = (s) => s.label || s.name.replace(/_/g, " ");
+    const keys = schemaKeys(schema);
+    f.addEventListener("value-changed", (e) => onChange(e.detail.value, keys));
+    return f;
+  }
+
+  _picker(label, placeholder, onChange) {
+    const p = document.createElement("launcher-color-picker");
+    p.label = label;
+    p.placeholder = placeholder;
+    p.addEventListener("color-changed", (e) => onChange(e.detail.value));
+    return p;
+  }
+
+  _globalPicker(key, label, placeholder) {
+    const p = this._picker(label, placeholder, (v) => {
+      const next = { ...this._config };
+      if (v) next[key] = v;
+      else delete next[key];
+      this._emit(next);
+    });
+    this._globalPickers[key] = p;
+    return p;
+  }
+
+  _section(title, ...children) {
+    const s = document.createElement("div");
+    s.className = "section";
+    s.innerHTML = `<div class="sub-title"></div>`;
+    s.firstChild.textContent = title;
+    s.append(...children);
+    return s;
+  }
+
+  _tabs(tabs, className, current, onSelect) {
+    const bar = document.createElement("div");
+    bar.className = className === "tab" ? "tabs" : "subtabs";
+    const panels = {};
+    const buttons = {};
+    const select = (id) => {
+      for (const t of tabs) {
+        buttons[t.id].classList.toggle("active", t.id === id);
+        panels[t.id].hidden = t.id !== id;
+      }
+      onSelect(id);
+    };
+    for (const t of tabs) {
+      const b = document.createElement("button");
+      b.className = className;
+      b.innerHTML = t.icon ? `<ha-icon icon="${t.icon}"></ha-icon><span></span>` : "<span></span>";
+      b.querySelector("span").textContent = t.label;
+      b.addEventListener("click", (e) => {
+        e.preventDefault();
+        select(t.id);
+      });
+      bar.appendChild(b);
+      buttons[t.id] = b;
+      panels[t.id] = document.createElement("div");
+    }
+    queueMicrotask(() => select(tabs.some((t) => t.id === current) ? current : tabs[0].id));
+    return { bar, panels };
+  }
+
   _build() {
     this._built = true;
-    this.innerHTML = "";
+    this._root.innerHTML = "";
     const style = document.createElement("style");
-    style.textContent = `
-      .ver { text-align:right; line-height:1.25; margin-bottom:8px; }
-      .ver .n { font-weight:500; color:var(--primary-text-color); }
-      .ver .v { font-size:12px; color:var(--secondary-text-color); }
-      .hint { font-size:12px; color:var(--secondary-text-color); margin:12px 0 4px; }
-      .apps-title { font-weight:500; margin:16px 0 4px; color:var(--primary-text-color); }
-      details.app-box { border:1px solid var(--divider-color); border-radius:var(--ha-card-border-radius, 12px); margin:8px 0; overflow:hidden; }
-      details.app-box[open] > summary { border-bottom:1px solid var(--divider-color); }
-      summary { list-style:none; display:flex; align-items:center; gap:10px; padding:8px 10px; cursor:pointer; user-select:none; }
-      summary::-webkit-details-marker { display:none; }
-      .chev { transition:transform .2s ease; color:var(--secondary-text-color); --mdc-icon-size:20px; display:flex; }
-      details[open] .chev { transform:rotate(90deg); }
-      .chip { width:28px; height:28px; border-radius:8px; flex:none; display:flex; align-items:center; justify-content:center;
-              background:linear-gradient(145deg, var(--c1, #4facfe), var(--c2, #1d5fe0)); color:#fff; --mdc-icon-size:18px; overflow:hidden; }
-      .chip img { width:70%; height:70%; object-fit:contain; }
-      .label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
-      .label small { display:block; font-weight:400; font-size:11px; color:var(--secondary-text-color); overflow:hidden; text-overflow:ellipsis; }
-      .btns { display:flex; gap:2px; }
-      .btns button { cursor:pointer; border:none; background:none; border-radius:50%; width:32px; height:32px; padding:0;
-                     color:var(--secondary-text-color); display:flex; align-items:center; justify-content:center; --mdc-icon-size:20px; }
-      .btns button:hover:not(:disabled) { background:var(--secondary-background-color); color:var(--primary-text-color); }
-      .btns button:disabled { opacity:.3; cursor:default; }
-      .body { padding:8px 12px 12px; }
-      .add { cursor:pointer; border:none; border-radius:var(--ha-card-border-radius, 12px); padding:10px 14px; margin-top:8px; width:100%;
-             background:var(--primary-color); color:var(--text-primary-color, #fff); font-weight:500; font-size:14px; }`;
-    this.appendChild(style);
+    style.textContent = EDITOR_CSS;
+    this._root.appendChild(style);
 
     const ver = document.createElement("div");
     ver.className = "ver";
     ver.innerHTML = `<div class="n">Launcher-Card</div><div class="v">v${CARD_VERSION}</div>`;
-    this.appendChild(ver);
+    this._root.appendChild(ver);
 
-    this._general = document.createElement("ha-form");
-    this._general.hass = this._hass;
-    this._general.data = this._flat();
-    this._general.schema = this._generalSchema();
-    this._general.computeLabel = (s) => s.label || s.name.replace(/_/g, " ");
-    this._general.addEventListener("value-changed", (e) => this._onGeneral(e.detail.value));
-    this.appendChild(this._general);
+    const { bar, panels } = this._tabs(EDITOR_TABS, "tab", this._tab, (id) => (this._tab = id));
+    this._root.appendChild(bar);
+    Object.values(panels).forEach((p) => this._root.appendChild(p));
 
-    const appsTitle = document.createElement("div");
-    appsTitle.className = "apps-title";
-    appsTitle.textContent = "Apps";
-    this.appendChild(appsTitle);
+    this._generalForms = [];
+    this._globalPickers = {};
+    for (const [id, schema] of Object.entries(GENERAL_SCHEMAS)) {
+      const f = this._form(schema, (v, keys) => this._onGeneral(v, keys));
+      this._generalForms.push(f);
+      panels[id].appendChild(f);
+    }
+    panels.badges.appendChild(this._section("Colors", this._globalPicker("icon_color", "Icon color (all apps)", "per style")));
+    this._shadowColor = this._globalPicker("name_shadow_color", "Text shadow color", "rgba(0,0,0,.65)");
+    panels.names.appendChild(this._section("Colors", this._globalPicker("name_color", "Name color", "theme text"), this._shadowColor));
 
+    this._appsPanel = panels.apps;
     this._rows = (this._config.apps || []).map((_, i) => this._buildRow(i));
-
-    const hint = document.createElement("div");
-    hint.className = "hint";
-    hint.textContent = "Colors: " + PRESET_NAMES.join(", ") + ", or any CSS color. Leave empty to derive from the logo.";
-    this.appendChild(hint);
-
     const add = document.createElement("button");
     add.className = "add";
     add.textContent = "+ Add app";
@@ -889,7 +1359,10 @@ class LauncherCardEditor extends HTMLElement {
       this._open.add(apps.length - 1);
       this._setApps(apps, true);
     });
-    this.appendChild(add);
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = "Tap a color swatch to open the color wheel. Hex, rgb() and CSS variables can also be typed. Leave the badge color on Auto to derive it from the logo.";
+    panels.apps.append(add, hint);
 
     this._sync();
   }
@@ -941,23 +1414,77 @@ class LauncherCardEditor extends HTMLElement {
 
     const body = document.createElement("div");
     body.className = "body";
-    const form = document.createElement("ha-form");
-    form.hass = this._hass;
-    form.schema = this._appSchema();
-    form.computeLabel = (s) => s.label || s.name;
-    form.addEventListener("value-changed", (e) => {
-      const apps = [...this._config.apps];
-      apps[i] = Object.fromEntries(Object.entries(e.detail.value).filter(([, v]) => v !== "" && v !== undefined && v !== false));
-      this._setApps(apps, false);
-      this._syncRow(i);
+    const { bar, panels } = this._tabs(APP_TABS, "subtab", this._appTab.get(i), (id) => this._appTab.set(i, id));
+    body.appendChild(bar);
+    Object.values(panels).forEach((p) => body.appendChild(p));
+
+    const forms = Object.entries(APP_SCHEMAS).map(([id, schema]) => {
+      const f = this._form(schema, (v, keys) => {
+        const app = { ...this._config.apps[i] };
+        for (const k of keys) {
+          const x = v[k];
+          if (x === "" || x === undefined || x === false) delete app[k];
+          else app[k] = x;
+        }
+        if (keys.includes("image") && app.image && isImage(app.icon)) delete app.icon;
+        const apps = [...this._config.apps];
+        apps[i] = app;
+        this._setApps(apps, false);
+        this._syncRow(i);
+      });
+      panels[id].appendChild(f);
+      return f;
     });
-    body.appendChild(form);
+
+    const presetsEl = document.createElement("div");
+    presetsEl.className = "presets";
+    const presetBtns = {};
+    ["", ...PRESET_NAMES].forEach((name) => {
+      const b = document.createElement("button");
+      b.className = "preset" + (name ? "" : " auto");
+      b.title = name ? name[0].toUpperCase() + name.slice(1) : "Auto (from logo)";
+      if (name) {
+        b.style.setProperty("--c1", PRESETS[name][0]);
+        b.style.setProperty("--c2", PRESETS[name][1]);
+      } else b.textContent = "AUTO";
+      b.addEventListener("click", () => {
+        const app = { ...this._config.apps[i] };
+        delete app.color2;
+        delete app.badge_color;
+        if (name) app.color = name;
+        else delete app.color;
+        this._setApp(i, app);
+      });
+      presetsEl.appendChild(b);
+      presetBtns[name] = b;
+    });
+    const pickers = {};
+    const pickerEls = [
+      ["color", "Badge color", "auto"],
+      ["color2", "Second color (gradient)", "auto"],
+      ["icon_color", "Icon color", "per style"],
+      ["notify_color", "Notification color", "#ff3b30"],
+    ].map(([key, label, ph]) => {
+      pickers[key] = this._picker(label, ph, (v) => {
+        const app = { ...this._config.apps[i] };
+        const was = PRESETS[app.color];
+        if (v) app[key] = v;
+        else delete app[key];
+        if (key === "color" && v && was && !app.color2) app.color2 = was[1];
+        this._setApp(i, app);
+      });
+      return pickers[key];
+    });
+    panels.colors.append(this._section("Presets", presetsEl), this._section("Custom", ...pickerEls));
+
     details.appendChild(body);
-    this.insertBefore(details, null);
+    this._appsPanel.insertBefore(details, this._appsPanel.querySelector(".add"));
 
     return {
       details,
-      form,
+      forms,
+      pickers,
+      presetBtns,
       up,
       down,
       chip: summary.querySelector(".chip"),
@@ -966,8 +1493,15 @@ class LauncherCardEditor extends HTMLElement {
     };
   }
 
+  _syncVisibility() {
+    if (this._shadowColor) this._shadowColor.hidden = !this._config.name_shadow;
+  }
+
   _sync() {
-    if (this._general) this._general.data = this._flat();
+    const flat = this._flat();
+    (this._generalForms || []).forEach((f) => (f.data = flat));
+    for (const [k, p] of Object.entries(this._globalPickers || {})) p.value = this._config[k] || "";
+    this._syncVisibility();
     this._rows.forEach((_, i) => this._syncRow(i, true));
   }
 
@@ -975,7 +1509,10 @@ class LauncherCardEditor extends HTMLElement {
     const r = this._rows[i];
     const app = (this._config.apps || [])[i];
     if (!r || !app) return;
-    if (withForm) r.form.data = this._appData(app);
+    if (withForm) {
+      const data = this._appData(app);
+      r.forms.forEach((f) => (f.data = data));
+    }
     r.details.open = this._open.has(i);
     r.up.disabled = i === 0;
     r.down.disabled = i === this._rows.length - 1;
@@ -985,6 +1522,15 @@ class LauncherCardEditor extends HTMLElement {
     const cc = appColors(app) || PRESETS.blue;
     r.chip.style.setProperty("--c1", cc[0]);
     r.chip.style.setProperty("--c2", cc[1]);
+
+    const preset = PRESETS[app.color] ? app.color : PRESETS[app.badge_color] ? app.badge_color : null;
+    for (const [name, b] of Object.entries(r.presetBtns)) b.classList.toggle("active", name === "" ? !app.color && !app.badge_color : name === preset);
+    r.pickers.color.value = preset ? PRESETS[preset][0] : app.color || app.badge_color || "";
+    r.pickers.color2.value = app.color2 || "";
+    r.pickers.color2.placeholder = preset ? PRESETS[preset][1] : "same";
+    r.pickers.icon_color.value = app.icon_color || "";
+    r.pickers.notify_color.value = app.notify_color || "";
+
     const src = imageOf(app);
     const key = src || app.icon || "";
     if (r.chip.dataset.key !== key) {
@@ -1005,6 +1551,7 @@ class LauncherCardEditor extends HTMLElement {
 
 customElements.define("launcher-card", LauncherCard);
 customElements.define("launcher-card-editor", LauncherCardEditor);
+if (!customElements.get("launcher-color-picker")) customElements.define("launcher-color-picker", LauncherColorPicker);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
