@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.11";
+const CARD_VERSION = "0.2.12";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -90,6 +90,11 @@ const DEFAULTS = {
   appear_stagger: 35,
   haptic: true,
   card_background: true,
+  entity_states: true,
+  notifications: true,
+  logo_colors: true,
+  gestures: true,
+  lite_mode: false,
 };
 
 const APPEAR_ANIMATIONS = {
@@ -366,6 +371,8 @@ if (!window.__launcherCardKeys) {
   );
 }
 
+const hasNotifyConfig = (a) => a.notify_entity || (a.notify_text !== undefined && a.notify_text !== "");
+
 class LauncherCard extends HTMLElement {
   static getStubConfig() {
     return {
@@ -393,6 +400,13 @@ class LauncherCard extends HTMLElement {
     }
     if (c.press_animation === true) c.press_animation = "shrink";
     if (c.press_animation === false) c.press_animation = "none";
+    if (c.lite_mode) {
+      c.appear_animation = "none";
+      c.hover_animation = "none";
+      if (c.press_animation !== "none") c.press_animation = "shrink";
+      if (c.name_overflow === "scroll") c.name_overflow = "ellipsis";
+      c.shadow = false;
+    }
     this._config = c;
     const appearKey = ["appear_animation", "appear_order", "appear_trigger", "appear_duration", "appear_stagger"].map((k) => c[k]).join("|");
     if (appearKey !== this._appearKey) {
@@ -925,8 +939,8 @@ class LauncherCard extends HTMLElement {
     const base = styleName(c.badge_style);
     const used = new Set([base]);
     for (const a of apps) if (a.badge_style) used.add(styleName(a.badge_style, base));
-    const hasNotify = apps.some((a) => a.notify_entity || (a.notify_text !== undefined && a.notify_text !== ""));
-    const hasEntity = apps.some((a) => a.entity);
+    const hasNotify = c.notifications && apps.some(hasNotifyConfig);
+    const hasEntity = c.entity_states && apps.some((a) => a.entity);
     const overflow = c.name_overflow;
     const justify = { start: "start", end: "end", center: "center" }[c.align] || "center";
     const radius = this._radius();
@@ -1141,7 +1155,9 @@ class LauncherCard extends HTMLElement {
       }
     }
 
-    return parts.join("\n").replace(/\n\s+/g, "\n");
+    let out = parts.join("\n").replace(/\n\s+/g, "\n");
+    if (c.lite_mode) out = out.replace(/(-webkit-)?backdrop-filter:[^;}]*;?/g, "");
+    return out;
   }
 
   _animStyles() {
@@ -1233,7 +1249,7 @@ class LauncherCard extends HTMLElement {
           img.className = "cover";
           badge.style.background = "none";
         }
-        if (!colors && app.auto_color !== false) extractColors(src).then((cc) => cc && setColors(cc));
+        if (!colors && c.logo_colors && app.auto_color !== false) extractColors(src).then((cc) => cc && setColors(cc));
         badge.appendChild(img);
       } else if (app.icon) {
         const ic = document.createElement("ha-icon");
@@ -1243,7 +1259,8 @@ class LauncherCard extends HTMLElement {
       }
       wrap.appendChild(badge);
 
-      const notify = document.createElement("div");
+      const notify = c.notifications && hasNotifyConfig(app) ? document.createElement("div") : null;
+      if (notify) {
       notify.className = "notify";
       if (app.notify_color) notify.style.setProperty("--notify-color", css(app.notify_color));
       if (app.notify_text !== undefined && app.notify_text !== "" && !app.notify_entity) {
@@ -1251,8 +1268,9 @@ class LauncherCard extends HTMLElement {
         notify.classList.add("show");
       }
       wrap.appendChild(notify);
+      }
 
-      if (c.active_indicator && app.entity) {
+      if (c.entity_states && c.active_indicator && app.entity) {
         const ind = document.createElement("div");
         ind.className = "indicator";
         wrap.appendChild(ind);
@@ -1281,7 +1299,7 @@ class LauncherCard extends HTMLElement {
     });
 
     gridEl.appendChild(frag);
-    this._dynamic = this._els.some((x) => x.app.entity || x.app.notify_entity);
+    this._dynamic = this._els.some((x) => (c.entity_states && x.app.entity) || (c.notifications && x.app.notify_entity));
     this._page = Math.min(this._page || 0, 999);
     this._setupSearch();
     this._paginate();
@@ -1296,12 +1314,12 @@ class LauncherCard extends HTMLElement {
     const states = this._hass.states;
     for (const item of this._els) {
       const { app, el, notify } = item;
-      const nst = app.notify_entity ? states[app.notify_entity] : undefined;
-      const est = app.entity ? states[app.entity] : undefined;
+      const nst = notify && app.notify_entity ? states[app.notify_entity] : undefined;
+      const est = this._config.entity_states && app.entity ? states[app.entity] : undefined;
       if (!force && item.nst === nst && item.est === est) continue;
       item.nst = nst;
       item.est = est;
-      if (app.notify_entity) {
+      if (notify && app.notify_entity) {
         const st = nst;
         const s = st ? String(st.state) : "";
         const n = Number(s);
@@ -1312,7 +1330,7 @@ class LauncherCard extends HTMLElement {
         notify.classList.toggle("dot", text === "");
         notify.textContent = text || "";
       }
-      if (app.entity) {
+      if (this._config.entity_states && app.entity) {
         const st = est;
         const s = st ? String(st.state) : "unavailable";
         el.classList.toggle("active", !INACTIVE_STATES.includes(s) && !(Number(s) === 0 && s.trim() !== "" && !isNaN(Number(s))));
@@ -1322,7 +1340,7 @@ class LauncherCard extends HTMLElement {
   }
 
   _bindActions(el, app) {
-    const has = (k) => app[k] && app[k].action && app[k].action !== "none";
+    const has = (k) => this._config.gestures && app[k] && app[k].action && app[k].action !== "none";
     let timer = null, held = false, tapTimer = null;
 
     el.addEventListener("pointerdown", (e) => {
@@ -1789,6 +1807,15 @@ const GENERAL_SCHEMAS = {
       { name: "dim_unavailable", label: "Dim unavailable", selector: { boolean: {} } }
     ),
   ],
+  features: [
+    grid(
+      { name: "entity_states", label: "Entity states (active dot, dimming)", selector: { boolean: {} } },
+      { name: "notifications", label: "Notification badges", selector: { boolean: {} } },
+      { name: "logo_colors", label: "Badge colors from logos", selector: { boolean: {} } },
+      { name: "gestures", label: "Hold & double-tap actions", selector: { boolean: {} } },
+      { name: "lite_mode", label: "Lite mode (fewer effects, for slow devices)", selector: { boolean: {} } }
+    ),
+  ],
 };
 
 const APP_SCHEMAS = {
@@ -2054,7 +2081,8 @@ class LauncherCardEditor extends HTMLElement {
     for (const [id, schema] of Object.entries(GENERAL_SCHEMAS)) {
       const f = this._form(schema, (v, keys) => this._onGeneral(v, keys));
       this._generalForms.push(f);
-      panels[id].appendChild(f);
+      if (id === "features") panels.effects.appendChild(this._section("Features (turn off what you don't use for better performance)", f));
+      else panels[id].appendChild(f);
     }
     panels.badges.appendChild(
       this._section(
