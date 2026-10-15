@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.12";
+const CARD_VERSION = "0.2.13";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -945,11 +945,16 @@ class LauncherCard extends HTMLElement {
     const justify = { start: "start", end: "end", center: "center" }[c.align] || "center";
     const radius = this._radius();
     const border = Math.max(0, num(c.badge_border, 0));
-    const grad = {
-      radial: "radial-gradient(circle at 30% 22%, var(--c1), var(--c2) 85%)",
-      conic: "conic-gradient(from var(--ang) at 50% 50%, var(--c1), var(--c2), var(--c1))",
-      diamond: "linear-gradient(var(--ang), var(--c1) 0%, var(--c2) 50%, var(--c1) 100%)",
-    }[c.gradient_type] || "linear-gradient(var(--ang), var(--c1), var(--c2))";
+    const ang = num(c.gradient_angle, 145);
+    const rad = (ang * Math.PI) / 180;
+    const spot = `${Math.round(50 - 32 * Math.sin(rad))}% ${Math.round(50 + 32 * Math.cos(rad))}%`;
+    const g = (a, b) =>
+      ({
+        radial: `radial-gradient(circle at ${spot}, ${a}, ${b} 88%)`,
+        conic: `conic-gradient(from ${ang}deg at 50% 50%, ${a}, ${b}, ${a})`,
+        diamond: `linear-gradient(${ang}deg, ${a} 0%, ${b} 50%, ${a} 100%)`,
+      })[c.gradient_type] || `linear-gradient(${ang}deg, ${a}, ${b})`;
+    const grad = g("var(--c1)", "var(--c2)");
     const gridCols = cols
       ? `grid-template-columns:repeat(${cols}, minmax(0, 1fr)); column-gap:0; row-gap:${m.gap}px;`
       : `grid-template-columns:repeat(auto-fit, ${m.cellH}px); gap:${m.gap}px;`;
@@ -968,13 +973,13 @@ class LauncherCard extends HTMLElement {
         box-shadow:inset 0 1px 0 rgba(var(--hi),.5),inset 0 -1px 0 rgba(var(--lo),.25),${sh("0 1px 2px rgba(var(--dp),.25),0 7px 12px -6px rgba(var(--dp),.55)")}}`,
       flat: `.s-flat{background:var(--c1);box-shadow:inset 0 0 0 1px rgba(var(--lo),.18),${sh("0 1px 2px rgba(var(--dp),.3)")}}`,
 
-      glossy: `.s-glossy{--ish:var(--ish3d);background:linear-gradient(180deg,var(--c1) 0%,var(--c2) 100%);
+      glossy: `.s-glossy{--ish:var(--ish3d);background:var(--grad);
         box-shadow:inset 0 1px 0 rgba(var(--hi),.9),inset 0 -3px 5px -2px rgba(var(--lo),.75),inset 0 0 0 1px rgba(var(--lo),.35),
                    ${sh("0 1px 1px rgba(var(--dp),.4),0 5px 8px -3px rgba(var(--dp),.45),0 13px 16px -9px rgba(var(--dp),.55)")}}
         .s-glossy::before{content:"";position:absolute;left:0;right:0;top:0;height:52%;pointer-events:none;
         border-radius:0 0 50% 50%/0 0 24% 24%;background:linear-gradient(180deg,rgba(255,255,255,.62),rgba(255,255,255,.1))}`,
 
-      depth: `.s-depth{--ish:var(--ish3d);background:linear-gradient(180deg,var(--c1),var(--c2));
+      depth: `.s-depth{--ish:var(--ish3d);background:var(--grad);
         box-shadow:inset 0 1px 0 rgba(var(--hi),.85),inset 0 -2px 2px rgba(var(--lo),.5),inset 0 0 0 1px rgba(var(--lo),.22),
                    ${sh("0 1px 1px rgba(var(--dp),.35),0 4px 7px -2px rgba(var(--dp),.4),0 12px 16px -9px rgba(var(--dp),.5)")}}`,
 
@@ -991,12 +996,12 @@ class LauncherCard extends HTMLElement {
         .s-sphere::before{content:"";position:absolute;left:18%;top:9%;width:36%;height:20%;border-radius:50%;pointer-events:none;
         transform:rotate(-24deg);background:radial-gradient(ellipse,rgba(255,255,255,.9),rgba(255,255,255,0) 70%)}`,
 
-      key: `.s-key{--ish:var(--ish3d);background:linear-gradient(180deg,var(--c1),var(--c2));
+      key: `.s-key{--ish:var(--ish3d);background:var(--grad);
         transition:${T},box-shadow .12s ease;
         box-shadow:inset 0 0 0 1.5px rgba(var(--hi),.4),inset 0 -3px 4px -1px rgba(var(--lo),.35),0 4px 0 rgb(var(--lo)),
                    ${sh("0 11px 10px -3px rgba(var(--dp),.5)")}}`,
 
-      stack: `.s-stack{--ish:var(--ish3d);background:linear-gradient(180deg,var(--c1),var(--c2));
+      stack: `.s-stack{--ish:var(--ish3d);background:var(--grad);
         box-shadow:inset 0 1px 0 rgba(var(--hi),.7),inset 0 0 0 1px rgba(var(--lo),.25),0 4px 0 -1px rgb(var(--mid)),0 9px 0 -3px rgb(var(--lo)),
                    ${sh("0 15px 12px -9px rgba(var(--dp),.55)")}}`,
 
@@ -1006,25 +1011,25 @@ class LauncherCard extends HTMLElement {
 
       glass: `.s-glass{
         background:linear-gradient(180deg,rgba(255,255,255,.3),rgba(255,255,255,0) 55%),
-                   linear-gradient(var(--ang),rgba(var(--t1),.86),rgba(var(--t2),.8));
+                   ${g("rgba(var(--t1),.86)", "rgba(var(--t2),.8)")};
         backdrop-filter:blur(12px) saturate(170%);-webkit-backdrop-filter:blur(12px) saturate(170%);
         box-shadow:inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 1px rgba(255,255,255,.3),
                    ${sh("0 1px 2px rgba(var(--dp),.2),0 8px 14px -7px rgba(var(--dp),.5)")}}`,
       liquid: `.s-liquid{
         background:radial-gradient(120% 70% at 50% -12%,rgba(255,255,255,.5),rgba(255,255,255,0) 62%),
                    radial-gradient(90% 60% at 50% 115%,rgba(var(--hi),.6) 0%,transparent 70%),
-                   linear-gradient(var(--ang),rgba(var(--t1),.78),rgba(var(--t2),.7));
+                   ${g("rgba(var(--t1),.78)", "rgba(var(--t2),.7)")};
         backdrop-filter:blur(10px) saturate(190%) brightness(1.1);-webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.1);
         box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.75),inset -1px -1px 1px rgba(255,255,255,.35),inset 0 0 0 1px rgba(255,255,255,.18),
                    inset 0 0 14px rgba(255,255,255,.18),${sh("0 10px 20px -10px rgba(var(--dp),.5),0 2px 4px -2px rgba(var(--dp),.25)")}}`,
       liquid_tint: `.s-liquid_tint{
         background:radial-gradient(120% 70% at 50% -12%,rgba(255,255,255,.42),rgba(255,255,255,0) 60%),
                    radial-gradient(90% 60% at 60% 115%,rgba(var(--hi),.7) 0%,transparent 70%),
-                   linear-gradient(var(--ang),rgba(var(--t1),.92),rgba(var(--t2),.86));
+                   ${g("rgba(var(--t1),.92)", "rgba(var(--t2),.86)")};
         backdrop-filter:blur(10px) saturate(190%) brightness(1.08);-webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.08);
         box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.65),inset -1px -1px 1px rgba(255,255,255,.3),inset 0 0 14px rgba(255,255,255,.14),
                    ${sh("0 10px 20px -10px rgba(var(--dp),.5),0 2px 4px -2px rgba(var(--dp),.25)")}}`,
-      tinted: `.s-tinted{--ic:var(--c2);background:linear-gradient(180deg,var(--tint),var(--tint2));
+      tinted: `.s-tinted{--ic:var(--c2);background:${g("var(--tint)", "var(--tint2)")};
         box-shadow:inset 0 1px 0 rgba(255,255,255,.7),inset 0 0 0 1px rgba(var(--mid),.22),
                    ${sh("0 1px 2px rgba(var(--dp),.15),0 6px 10px -6px rgba(var(--dp),.35)")}}`,
       light: `.s-light{background:linear-gradient(180deg,#fff,#eceef2);
@@ -1088,7 +1093,7 @@ class LauncherCard extends HTMLElement {
         cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;
         -webkit-tap-highlight-color:transparent;outline:none;touch-action:manipulation}
       .wrap{position:relative;flex:none}
-      .badge{--ang:${num(c.gradient_angle, 145)}deg;--ic:#fff;--grad:${grad};
+      .badge{--ic:#fff;--grad:${grad};
         --ish:${ICON_SHADOWS[c.icon_shadow] || ICON_SHADOWS.soft};--ish3d:${ICON_SHADOWS_3D[c.icon_shadow] || ICON_SHADOWS_3D.soft};
         position:relative;width:${m.badge}px;height:${m.badge}px;border-radius:${radius};
         display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box;
@@ -1770,7 +1775,7 @@ const GENERAL_SCHEMAS = {
     grid(
       { name: "radius_mode", label: "Rounding", selector: { select: { mode: "dropdown", options: opt({ theme: "Follow theme", fixed: "Fixed value" }) } } },
       { name: "radius_value", label: "Rounding (px)", selector: { number: { min: 0, max: 64, mode: "box" } } },
-      { name: "gradient_type", label: "Gradient type", selector: { select: { mode: "dropdown", options: opt({ linear: "Linear", radial: "Radial", conic: "Conic", diamond: "Mirrored" }) } } },
+      { name: "gradient_type", label: "Gradient type (all two-colour styles)", selector: { select: { mode: "dropdown", options: opt({ linear: "Linear", radial: "Radial", conic: "Conic", diamond: "Mirrored" }) } } },
       { name: "gradient_angle", label: "Gradient angle", selector: { number: { min: 0, max: 360, mode: "box" } } },
       { name: "badge_border", label: "Border width (px)", selector: { number: { min: 0, max: 8, mode: "box" } } },
       { name: "icon_shadow", label: "Icon shadow", selector: { select: { mode: "dropdown", options: opt({ none: "None", soft: "Soft", medium: "Medium", strong: "Strong" }) } } },
