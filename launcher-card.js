@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.6";
+const CARD_VERSION = "0.2.7";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -17,24 +17,25 @@ const PRESET_NAMES = Object.keys(PRESETS);
 
 const BADGE_STYLES = {
   gradient: "Gradient",
-  aurora: "Aurora (mesh gradient)",
-  glass: "Glass",
-  liquid: "Liquid glass (clear)",
+  flat: "Flat",
+  depth: "Depth (soft raised)",
+  pillow: "Pillow (soft convex)",
+  key: "Key (raised cap)",
+  stack: "Stack (layered plates)",
+  inset: "Inset (recessed)",
+  glass: "Frosted glass",
+  liquid: "Liquid glass",
   liquid_tint: "Liquid glass (tinted)",
-  liquid_dark: "Liquid glass (smoked)",
-  bubble: "Glass bubble",
-  clay: "Clay (soft 3D)",
-  inflated: "Inflated (puffy 3D)",
-  bevel: "Bevel (raised 3D button)",
-  orb: "Orb (glossy 3D)",
-  chrome: "Chrome (metal 3D)",
-  soft: "Soft UI (neumorphic)",
   tinted: "Tinted",
   dark: "Dark",
-  neon: "Neon",
-  flat: "Flat",
   minimal: "Minimal (icon only)",
 };
+
+const LEGACY_STYLES = {
+  aurora: "gradient", clay: "pillow", inflated: "pillow", bevel: "key", orb: "pillow", chrome: "depth",
+  soft: "inset", neon: "dark", bubble: "glass", liquid_dark: "liquid_tint",
+};
+const styleName = (n, fallback = "gradient") => (BADGE_STYLES[n] ? n : LEGACY_STYLES[n] || fallback);
 
 const ICON_SHADOWS = {
   none: "drop-shadow(0 0 0 transparent)",
@@ -677,6 +678,7 @@ class LauncherCard extends HTMLElement {
       ? "0 6px 14px -5px color-mix(in srgb, var(--c2) 65%, rgba(0,0,0,.55)), 0 2px 4px rgba(0,0,0,.18)"
       : "0 0 #0000";
     const pad = m.pad;
+    const sh = (v) => (c.shadow ? v : "0 0 #0000");
     const grad = {
       radial: "radial-gradient(circle at 30% 22%, var(--c1), var(--c2) 85%)",
       conic: "conic-gradient(from var(--ang) at 50% 50%, var(--c1), var(--c2), var(--c1))",
@@ -734,87 +736,78 @@ class LauncherCard extends HTMLElement {
                ${border ? `border:${border}px solid ${css(c.badge_border_color) || "rgba(255,255,255,.35)"};` : ""} }
       .badge::after { content:""; position:absolute; inset:0; pointer-events:none; border-radius:inherit; }
 
-      /* ---- badge styles ---- */
+      /* ---- badge styles ----
+         One light source (top-left), thin inner edges instead of heavy gloss, and shadows tinted by the badge color. */
       .s-gradient { background:var(--grad);
-                    box-shadow:var(--outer), inset 0 0 0 1px rgba(255,255,255,.12); }
-      .s-aurora { background:
-                    radial-gradient(120% 90% at 12% 8%, color-mix(in srgb, var(--c1) 55%, #fff) 0%, transparent 55%),
-                    radial-gradient(90% 90% at 92% 95%, color-mix(in srgb, var(--c2) 80%, #000) 0%, transparent 65%),
-                    radial-gradient(70% 70% at 85% 15%, color-mix(in srgb, var(--c2) 60%, var(--c1)) 0%, transparent 70%),
-                    linear-gradient(var(--ang), var(--c1), var(--c2));
-                  box-shadow:var(--outer), inset 0 0 0 1px rgba(255,255,255,.14); }
-      .s-glass { background:linear-gradient(var(--ang), color-mix(in srgb, var(--c1) 60%, transparent), color-mix(in srgb, var(--c2) 28%, transparent));
-                 backdrop-filter:blur(14px) saturate(170%); -webkit-backdrop-filter:blur(14px) saturate(170%);
-                 box-shadow:var(--outer), inset 0 0 0 1px rgba(255,255,255,.32), inset 0 1px 1px rgba(255,255,255,.55); }
-      .s-clay { background:linear-gradient(var(--ang), color-mix(in srgb, var(--c1) 85%, #fff), var(--c2));
-                box-shadow:var(--outer), inset 0 -5px 9px color-mix(in srgb, var(--c2) 60%, rgba(0,0,0,.45)),
-                           inset 0 5px 8px rgba(255,255,255,.45); }
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.3), inset 0 0 0 .5px rgba(255,255,255,.18),
+                   ${sh("0 1px 2px rgba(0,0,0,.14), 0 7px 12px -6px color-mix(in srgb, var(--c2) 70%, rgba(0,0,0,.4))")}; }
+      .s-flat { background:var(--c1);
+        box-shadow:inset 0 0 0 .5px rgba(0,0,0,.08), ${sh("0 1px 2px rgba(0,0,0,.18)")}; }
+
+      /* Depth: a gently lit slab. Top edge catches light, the underside is shaded, the shadow is layered. */
+      .s-depth {
+        background:linear-gradient(180deg, color-mix(in srgb, var(--c1) 86%, #fff) 0%, var(--c1) 55%, color-mix(in srgb, var(--c1) 80%, var(--c2)) 100%);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 -2px 3px color-mix(in srgb, var(--c2) 45%, rgba(0,0,0,.2)),
+                   inset 0 0 0 .5px rgba(0,0,0,.12),
+                   ${sh("0 1px 1px rgba(0,0,0,.16), 0 4px 8px -2px color-mix(in srgb, var(--c2) 55%, rgba(0,0,0,.35)), 0 12px 18px -10px color-mix(in srgb, var(--c2) 60%, rgba(0,0,0,.4))")}; }
+
+      /* Pillow: a soft convex surface lit from the top-left, shaded toward the bottom-right. */
+      .s-pillow {
+        background:radial-gradient(130% 130% at 28% 16%, color-mix(in srgb, var(--c1) 62%, #fff) 0%, var(--c1) 42%, var(--c2) 100%);
+        box-shadow:inset 1px 2px 2px rgba(255,255,255,.4), inset -2px -7px 10px -3px color-mix(in srgb, var(--c2) 70%, rgba(0,0,0,.35)),
+                   inset 0 0 0 .5px rgba(0,0,0,.1),
+                   ${sh("0 2px 3px rgba(0,0,0,.12), 0 9px 14px -7px color-mix(in srgb, var(--c2) 70%, rgba(0,0,0,.4))")}; }
+
+      /* Key: a raised cap with a solid side edge that disappears when pressed. */
+      .s-key {
+        background:linear-gradient(180deg, color-mix(in srgb, var(--c1) 82%, #fff), var(--c1));
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 0 0 .5px rgba(0,0,0,.1),
+                   0 3px 0 color-mix(in srgb, var(--c2) 78%, #000),
+                   ${sh("0 9px 12px -5px rgba(0,0,0,.38)")}; }
+
+      /* Stack: the badge sits on two thinner plates, like a pile of cards. */
+      .s-stack {
+        background:var(--grad);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.4), inset 0 0 0 .5px rgba(0,0,0,.1),
+                   0 4px 0 -1px color-mix(in srgb, var(--c1) 55%, var(--c2)),
+                   0 11px 0 -5px color-mix(in srgb, var(--c1) 30%, var(--c2)),
+                   ${sh("0 14px 14px -10px rgba(0,0,0,.45)")}; }
+
+      /* Inset: a recessed well with the icon sitting in it. */
+      .s-inset { --ic:var(--c1);
+        background:linear-gradient(180deg, color-mix(in srgb, var(--c1) 24%, var(--card-background-color, #fff)),
+                                           color-mix(in srgb, var(--c1) 11%, var(--card-background-color, #fff)));
+        box-shadow:inset 0 3px 6px color-mix(in srgb, var(--c1) 38%, rgba(0,0,0,.3)), inset 0 0 0 .5px color-mix(in srgb, var(--c1) 35%, transparent),
+                   ${sh("0 1px 0 rgba(255,255,255,.5)")}; }
+
+      .s-glass {
+        background:linear-gradient(var(--ang), color-mix(in srgb, var(--c1) 58%, transparent), color-mix(in srgb, var(--c2) 30%, transparent));
+        backdrop-filter:blur(14px) saturate(170%); -webkit-backdrop-filter:blur(14px) saturate(170%);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.55), inset 0 0 0 1px rgba(255,255,255,.28), ${sh("0 8px 16px -8px rgba(0,0,0,.4)")}; }
+
+      /* Liquid glass: nearly clear, a bright rim and a soft pool of color along the bottom. */
+      .s-liquid, .s-liquid_tint {
+        backdrop-filter:blur(10px) saturate(190%) brightness(1.08); -webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.08);
+        box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.65), inset -1px -1px 1px rgba(255,255,255,.28),
+                   inset 0 0 0 1px rgba(255,255,255,.14), inset 0 0 14px rgba(255,255,255,.12),
+                   ${sh("0 10px 20px -10px rgba(0,0,0,.45), 0 2px 4px -2px rgba(0,0,0,.2)")}; }
+      .s-liquid { --ic:var(--c1);
+        background:radial-gradient(95% 60% at 50% 115%, color-mix(in srgb, var(--c1) 50%, transparent) 0%, transparent 72%),
+                   linear-gradient(var(--ang), rgba(255,255,255,.26), rgba(255,255,255,.05) 60%, rgba(255,255,255,.12)); }
+      .s-liquid_tint {
+        background:radial-gradient(90% 60% at 60% 115%, color-mix(in srgb, var(--c1) 70%, #fff) 0%, transparent 70%),
+                   linear-gradient(var(--ang), color-mix(in srgb, var(--c1) 72%, transparent), color-mix(in srgb, var(--c2) 58%, transparent)); }
+
       .s-tinted { --ic:var(--c1); background:color-mix(in srgb, var(--c1) 17%, var(--card-background-color, #fff));
-                  box-shadow:${c.shadow ? "0 3px 8px -4px rgba(0,0,0,.25)," : ""} inset 0 0 0 1px color-mix(in srgb, var(--c1) 28%, transparent); }
+        box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--c1) 26%, transparent), ${sh("0 3px 8px -5px rgba(0,0,0,.3)")}; }
       .s-dark { --ic:color-mix(in srgb, var(--c1) 85%, #fff);
-                background:radial-gradient(120% 100% at 30% 0%, #3b3f47 0%, #1b1d22 60%, #121317 100%);
-                box-shadow:var(--outer), inset 0 0 0 1px rgba(255,255,255,.08), inset 0 1px 0 rgba(255,255,255,.1); }
-      .s-neon { --ic:var(--c1); background:radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--c1) 22%, #0d0f14) 0%, #0a0b0f 75%);
-                box-shadow:inset 0 0 0 1.5px var(--c1), inset 0 0 14px color-mix(in srgb, var(--c1) 40%, transparent),
-                           0 0 16px -3px color-mix(in srgb, var(--c1) 75%, transparent); }
-      .s-neon ha-icon { filter:var(--ish) drop-shadow(0 0 2px color-mix(in srgb, currentColor 45%, #000))
-                                         drop-shadow(0 0 7px color-mix(in srgb, currentColor 55%, #000)); }
-      .s-flat { background:var(--c1); }
+        background:linear-gradient(180deg, #2d3037, #181a1f);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.14), inset 0 0 0 .5px rgba(255,255,255,.08), ${sh("0 7px 12px -6px rgba(0,0,0,.6)")}; }
       .s-minimal { --ic:var(--c1); background:none; box-shadow:none; overflow:visible; border-color:transparent; }
       .s-minimal ha-icon { --mdc-icon-size:${m.minimalIcon}px; }
 
-      /* ---- liquid glass ---- */
-      .badge::before { position:absolute; inset:0; pointer-events:none; border-radius:inherit; }
-      .s-liquid, .s-liquid_tint, .s-liquid_dark, .s-bubble {
-        --rim:inset 1.5px 1.5px 1px rgba(255,255,255,.7), inset -1px -1px 1px rgba(255,255,255,.3),
-              inset 0 0 0 1px rgba(255,255,255,.16), inset 0 0 0 .5px color-mix(in srgb, var(--primary-text-color) 18%, transparent),
-              inset 0 0 14px rgba(255,255,255,.14);
-        --glass-outer:${c.shadow ? "0 10px 22px -10px rgba(0,0,0,.45), 0 2px 5px -2px rgba(0,0,0,.2)" : "0 0 #0000"};
-        backdrop-filter:blur(10px) saturate(190%) brightness(1.08); -webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.08);
-        box-shadow:var(--glass-outer), var(--rim); }
-      .s-liquid { --ic:var(--c1);
-        background:radial-gradient(95% 60% at 50% 112%, color-mix(in srgb, var(--c1) 50%, transparent) 0%, transparent 72%),
-                   linear-gradient(var(--ang), rgba(255,255,255,.26), rgba(255,255,255,.05) 60%, rgba(255,255,255,.12)); }
-      .s-liquid_tint {
-        background:radial-gradient(80% 55% at 22% 10%, rgba(255,255,255,.38) 0%, transparent 60%),
-                   radial-gradient(90% 60% at 60% 115%, color-mix(in srgb, var(--c1) 70%, #fff) 0%, transparent 70%),
-                   linear-gradient(var(--ang), color-mix(in srgb, var(--c1) 72%, transparent), color-mix(in srgb, var(--c2) 58%, transparent)); }
-      .s-liquid_dark { --ic:color-mix(in srgb, var(--c1) 82%, #fff);
-        background:radial-gradient(95% 60% at 50% 115%, color-mix(in srgb, var(--c1) 42%, transparent) 0%, transparent 70%),
-                   linear-gradient(180deg, rgba(48,50,58,.55), rgba(14,15,19,.72)); }
-      .s-bubble { --ic:var(--c1);
-        background:radial-gradient(circle at 50% 125%, color-mix(in srgb, var(--c1) 75%, transparent) 0%, transparent 62%),
-                   radial-gradient(circle at 50% 50%, transparent 55%, color-mix(in srgb, var(--c2) 22%, transparent) 100%),
-                   color-mix(in srgb, var(--c1) 10%, transparent); }
-      .s-liquid::before, .s-liquid_tint::before, .s-liquid_dark::before {
-        content:""; inset:2px 3px 48% 3px; border-radius:inherit; opacity:.9;
-        background:linear-gradient(180deg, rgba(255,255,255,.42), rgba(255,255,255,0)); }
-      .s-bubble::before { content:""; inset:7% 22% 58% 16%; border-radius:50%; transform:rotate(-12deg);
-        background:linear-gradient(180deg, rgba(255,255,255,.8), rgba(255,255,255,0)); }
-
-      /* ---- 3D ---- */
-      .s-inflated { background:linear-gradient(var(--ang), color-mix(in srgb, var(--c1) 80%, #fff), var(--c2));
-        box-shadow:var(--outer), inset 0 9px 12px -5px rgba(255,255,255,.65),
-                   inset 0 -11px 14px -5px color-mix(in srgb, var(--c2) 50%, #000),
-                   inset 7px 0 10px -7px rgba(255,255,255,.4), inset -7px 0 10px -7px rgba(0,0,0,.3); }
-      .s-bevel { background:linear-gradient(180deg, color-mix(in srgb, var(--c1) 80%, #fff), var(--c1) 45%, var(--c2));
-        box-shadow:inset 0 1.5px 0 rgba(255,255,255,.6), inset 0 -3px 0 color-mix(in srgb, var(--c2) 70%, #000),
-                   0 4px 0 color-mix(in srgb, var(--c2) 55%, #000), ${c.shadow ? "0 8px 10px -2px rgba(0,0,0,.35)" : "0 0 #0000"}; }
-      .s-orb { background:radial-gradient(circle at 32% 26%, color-mix(in srgb, var(--c1) 40%, #fff) 0%, var(--c1) 28%,
-                                          var(--c2) 70%, color-mix(in srgb, var(--c2) 55%, #000) 100%);
-        box-shadow:var(--outer), inset 0 -6px 12px color-mix(in srgb, var(--c2) 50%, rgba(0,0,0,.5)), inset 0 2px 3px rgba(255,255,255,.35); }
-      .s-orb::before { content:""; inset:5% 20% 55% 20%; border-radius:50%;
-        background:linear-gradient(180deg, rgba(255,255,255,.75), rgba(255,255,255,0)); }
-      .s-chrome { --ic:var(--c2);
-        background:linear-gradient(180deg, #f6f8fa 0%, #d2d7de 44%, #a3aab4 50%, #c8cdd4 62%, #eef1f4 100%);
-        box-shadow:var(--outer), inset 0 1px 0 #fff, inset 0 -1px 1px rgba(0,0,0,.3), inset 0 0 0 1px rgba(0,0,0,.14); }
-      .s-chrome ha-icon { filter:var(--ish) drop-shadow(0 1px 0 rgba(255,255,255,.8)); }
-      .s-soft { --ic:var(--c1); --bg:var(--card-background-color, #fff); overflow:visible;
-        background:linear-gradient(145deg, color-mix(in srgb, var(--bg) 92%, #fff), color-mix(in srgb, var(--bg) 92%, #000));
-        box-shadow:5px 5px 11px color-mix(in srgb, var(--bg) 72%, #000), -5px -5px 11px color-mix(in srgb, var(--bg) 82%, #fff); }
-
-      ${c.shine ? `.s-gradient::after, .s-aurora::after, .s-flat::after, .s-glass::after, .s-clay::after, .s-inflated::after, .s-bevel::after {
-                     background:linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,255,255,0) 52%); }` : ""}
+      ${c.shine ? `.s-gradient::after, .s-flat::after, .s-key::after, .s-stack::after {
+                     background:linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,0) 48%); }` : ""}
 
       .app:focus-visible .badge { outline:2px solid var(--primary-color); outline-offset:3px; }
       ${this._animStyles()}
@@ -888,11 +881,10 @@ class LauncherCard extends HTMLElement {
                .app.tapped .wrap::after { animation:lc-ripple .6s ease-out; }`,
     }[c.press_animation] || "";
     const physical = c.press_animation && c.press_animation !== "none"
-      ? `.app.pressed .s-bevel { translate:0 3px; scale:1;
-           box-shadow:inset 0 1.5px 0 rgba(255,255,255,.6), inset 0 -2px 0 color-mix(in srgb, var(--c2) 70%, #000),
-                      0 1px 0 color-mix(in srgb, var(--c2) 55%, #000); }
-         .app.pressed .s-soft { translate:0 0; scale:1;
-           box-shadow:inset 4px 4px 8px color-mix(in srgb, var(--bg) 72%, #000), inset -4px -4px 8px color-mix(in srgb, var(--bg) 82%, #fff); }`
+      ? `.app.pressed .s-key { translate:0 2px; scale:1;
+           box-shadow:inset 0 1px 0 rgba(255,255,255,.4), inset 0 0 0 .5px rgba(0,0,0,.1), 0 1px 0 color-mix(in srgb, var(--c2) 78%, #000); }
+         .app.pressed .s-stack { translate:0 3px; scale:1; }
+         .app.pressed .s-inset { scale:.97; }`
       : "";
     return `
       .badge { transition-property:transform, translate, scale, rotate, filter, opacity, box-shadow;
@@ -929,7 +921,7 @@ class LauncherCard extends HTMLElement {
     if (c.title) this.shadowRoot.querySelector(".title").textContent = c.title;
 
     const gridEl = this.shadowRoot.querySelector(".grid");
-    const style = BADGE_STYLES[c.badge_style] ? c.badge_style : "gradient";
+    const style = styleName(c.badge_style);
     this._els = [];
 
     const apps = c.sort === "name"
@@ -947,7 +939,7 @@ class LauncherCard extends HTMLElement {
       const wrap = document.createElement("div");
       wrap.className = "wrap";
       const badge = document.createElement("div");
-      badge.className = `badge s-${BADGE_STYLES[app.badge_style] ? app.badge_style : style}`;
+      badge.className = `badge s-${styleName(app.badge_style, style)}`;
       const colors = appColors(app);
       const setColors = (cc) => {
         el.style.setProperty("--c1", cc[0]);
