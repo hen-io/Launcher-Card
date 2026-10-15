@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.5.1";
+const CARD_VERSION = "0.2.2";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
