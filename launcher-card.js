@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.4";
+const CARD_VERSION = "0.2.5";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -1183,6 +1183,11 @@ class LauncherColorPicker extends HTMLElement {
     this._hex.placeholder = t;
   }
 
+  set open(v) {
+    this._panel.hidden = !v;
+    if (v) this._drawWheel();
+  }
+
   get value() {
     return this._value;
   }
@@ -1754,6 +1759,7 @@ class LauncherCardEditor extends HTMLElement {
         if (key === "color" && v && was && !app.color2) app.color2 = was[1];
         this._setApp(i, app);
       });
+      if (key === "color" || key === "color2") pickers[key].open = true;
       return pickers[key];
     });
     panels.colors.append(this._section("Presets", presetsEl), this._section("Custom", ...pickerEls));
