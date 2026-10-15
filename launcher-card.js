@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.8";
+const CARD_VERSION = "0.2.9";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -269,7 +269,9 @@ class LauncherCard extends HTMLElement {
       this._ro = new ResizeObserver((entries) => {
         const w = Math.round(entries[entries.length - 1].contentRect.width);
         if (w === this._lastWidth) return;
+        const own = this._ownLayout;
         this._lastWidth = w;
+        if (own) return;
         this._layout();
       });
     }
@@ -490,6 +492,14 @@ class LauncherCard extends HTMLElement {
 
   _layout() {
     if (!this.shadowRoot || !this._config) return;
+    this._ownLayout = true;
+    this._laidWidth = Math.round(this.clientWidth);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        this._ownLayout = false;
+        if (Math.abs(Math.round(this.clientWidth) - this._laidWidth) > 20) this._layout();
+      })
+    );
     this._paginate();
     const grids = this.shadowRoot.querySelectorAll(".grid");
     if (!grids.length) return;
@@ -533,6 +543,7 @@ class LauncherCard extends HTMLElement {
     const hidden = this._els.filter((x) => x.el.classList.contains("filtered"));
     let chunks = [live];
     const width = pagesEl.clientWidth;
+    if (c.pages && width === 0 && this._pageCount) return;
     if (c.pages && width > 0) {
       const m = this._metrics();
       const W = Math.max(1, width - 2 * m.pad);
@@ -541,7 +552,7 @@ class LauncherCard extends HTMLElement {
       const rowPitch = fixed ? Math.max(m.cellH + 4, W / cols) : m.cellH + m.gap;
       let rows;
       if (c.rows_per_page === "auto" || c.rows_per_page === undefined || c.rows_per_page === "") {
-        const top = Math.min(Math.max(pagesEl.getBoundingClientRect().top, 0), window.innerHeight * 0.5);
+        const top = Math.min(Math.max(this._stableTop(pagesEl), 0), window.innerHeight * 0.5);
         const avail = window.innerHeight - top - 2 * m.pad - 28;
         rows = Math.max(1, Math.floor((avail + (rowPitch - m.cellH)) / rowPitch));
       } else rows = Math.max(1, Math.round(num(c.rows_per_page, 3)));
@@ -576,6 +587,16 @@ class LauncherCard extends HTMLElement {
 
     this._pageCount = chunks.length;
     this._buildDots(pagesEl);
+  }
+
+  _stableTop(el) {
+    let top = el.getBoundingClientRect().top + (window.scrollY || 0);
+    for (let n = el, guard = 0; n && guard < 80; guard++) {
+      if (n.scrollTop) top += n.scrollTop;
+      const root = n.getRootNode && n.getRootNode();
+      n = n.assignedSlot || n.parentElement || (root && root.host) || null;
+    }
+    return top;
   }
 
   _buildDots(pagesEl) {
