@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.1.0";
+const CARD_VERSION = "0.1.1";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -346,8 +346,16 @@ class LauncherCardEditor extends HTMLElement {
       .app-head button, .add { cursor:pointer; border:none; border-radius:6px; padding:6px 10px;
         background:var(--secondary-background-color); color:var(--primary-text-color); margin-left:4px; }
       .add { background:var(--primary-color); color:var(--text-primary-color,#fff); }
+      .ver { text-align:right; line-height:1.25; margin-bottom:8px; }
+      .ver .n { font-weight:500; color:var(--primary-text-color); }
+      .ver .v { font-size:12px; color:var(--secondary-text-color); }
       .hint { font-size:12px; color:var(--secondary-text-color); margin:4px 0; }`;
     this.appendChild(style);
+
+    const ver = document.createElement("div");
+    ver.className = "ver";
+    ver.innerHTML = `<div class="n">Launcher-Card</div><div class="v">v${CARD_VERSION}</div>`;
+    this.appendChild(ver);
 
     const general = document.createElement("ha-form");
     general.hass = this._hass;
