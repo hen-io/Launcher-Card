@@ -1,5 +1,5 @@
 (() => { "use strict";
-const CARD_VERSION = "0.2.18";
+const CARD_VERSION = "0.2.19";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -742,7 +742,7 @@ class LauncherCard extends HTMLElement {
       const dist = `${textW + 24}px`;
       if (over && (!n.classList.contains("marquee") || track.style.getPropertyValue("--dist") !== dist)) {
         track.style.setProperty("--dist", dist);
-        track.style.setProperty("--dur", `${Math.max(4, (textW + 24) / speed + 2).toFixed(2)}s`);
+        track.style.setProperty("--dur", `${Math.max(1, (textW + 24) / speed).toFixed(2)}s`);
         n.classList.add("marquee");
       } else if (!over && n.classList.contains("marquee")) {
         n.classList.remove("marquee");
@@ -1200,7 +1200,7 @@ class LauncherCard extends HTMLElement {
     if (c.show_names) {
       const lines = overflow === "wrap" ? 2 : 1;
       add(`.name{font-size:${clamp(num(c.name_size, 12), 6, 48)}px;line-height:${m.lineH}px;height:${m.lineH * lines}px;width:calc(100% + 16px);margin:0 -8px;text-align:center;
-          overflow:hidden;color:${css(c.name_color) || "var(--primary-text-color)"};
+          overflow:hidden;contain:paint;color:${css(c.name_color) || "var(--primary-text-color)"};
           ${c.name_weight ? `font-weight:${num(c.name_weight, 400)};` : ""}
           ${["uppercase", "lowercase", "capitalize"].includes(c.name_transform) ? `text-transform:${c.name_transform};letter-spacing:.02em;` : ""}
           ${c.name_shadow ? `text-shadow:0 1px ${Math.max(0, num(c.name_shadow_blur, 3))}px ${css(c.name_shadow_color) || "rgba(0,0,0,.65)"};` : ""}}
@@ -1215,10 +1215,10 @@ class LauncherCard extends HTMLElement {
         add(`.t.clone{display:none;padding-left:24px}
           .marquee{text-align:left;-webkit-mask-image:linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent);
             mask-image:linear-gradient(90deg,transparent,#000 6%,#000 94%,transparent)}
-          .marquee .track{max-width:none;animation:lc-marquee var(--dur,8s) linear infinite}
+          .marquee .track{max-width:none;animation:lc-marquee var(--dur,8s) linear infinite;will-change:transform}
           .marquee .t.clone{display:inline-block}
           .offscreen .marquee .track{animation-play-state:paused}
-          @keyframes lc-marquee{0%,18%{transform:translateX(0)}100%{transform:translateX(calc(-1 * var(--dist)))}}
+          @keyframes lc-marquee{from{transform:translateX(0)}to{transform:translateX(calc(-1 * var(--dist)))}}
           @media (prefers-reduced-motion:reduce){
             .marquee{-webkit-mask-image:none;mask-image:none;text-align:center}
             .marquee .track{animation:none;max-width:100%;overflow:hidden;text-overflow:ellipsis}
