@@ -1,5 +1,5 @@
 (() => { "use strict";
-const CARD_VERSION = "0.2.17";
+const CARD_VERSION = "0.2.18";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -1129,7 +1129,7 @@ class LauncherCard extends HTMLElement {
         .pages.paged::-webkit-scrollbar{display:none}
         .pages.paged.dragging{scroll-snap-type:none;cursor:grabbing;user-select:none;-webkit-user-select:none}
         .pages.paged.dragging .app{pointer-events:none}
-        .page{scroll-snap-align:start;scroll-snap-stop:always}
+        .page{scroll-snap-align:start;scroll-snap-stop:always;overflow:clip;contain:paint}
         .dots{display:flex;justify-content:center;align-items:center;gap:8px;padding:0 0 ${Math.max(10, pad)}px}
         .dot{width:8px;height:8px;padding:0;border:none;border-radius:4px;cursor:pointer;flex:none;
           background:var(--divider-color,rgba(127,127,127,.4));transition:width .25s ease,background-color .25s ease}
