@@ -1,5 +1,5 @@
 (() => { "use strict";
-const CARD_VERSION = "0.2.16";
+const CARD_VERSION = "0.2.17";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -940,7 +940,7 @@ class LauncherCard extends HTMLElement {
   }
 
   _spread() {
-    return this._config.align === "spread";
+    return this._config.align !== "start" && this._config.align !== "end";
   }
 
   _maxCols() {
@@ -1002,7 +1002,7 @@ class LauncherCard extends HTMLElement {
     const hasNotify = c.notifications && apps.some(hasNotifyConfig);
     const hasEntity = c.entity_states && apps.some((a) => a.entity);
     const overflow = c.name_overflow;
-    const justify = { start: "start", end: "end", center: "center", spread: "space-between" }[c.align] || "space-between";
+    const justify = { start: "start", end: "end" }[c.align] || "space-between";
     const radius = this._radius();
     const border = Math.max(0, num(c.badge_border, 0));
     const ang = num(c.gradient_angle, 145);
@@ -1936,7 +1936,7 @@ const GENERAL_SCHEMAS = {
       { name: "badge_size", label: "Badge size (px)", selector: { number: { min: 24, max: 160, mode: "box" } } },
       { name: "icon_percent", label: "Icon size (% of badge, empty = auto)", selector: { number: { min: 10, max: 100, step: 1, mode: "box", unit_of_measurement: "%" } } },
       { name: "gap", label: "Spacing (px)", selector: { number: { min: 0, max: 60, mode: "box" } } },
-      { name: "align", label: "Grid alignment", selector: { select: { mode: "dropdown", options: opt({ spread: "Spread to edges", start: "Left", center: "Center", end: "Right" }) } } },
+      { name: "align", label: "Grid alignment", selector: { select: { mode: "dropdown", options: opt({ spread: "Full width (spread to the edges)", start: "Left (packed)", end: "Right (packed)" }) } } },
       { name: "side_padding", label: "Side padding (px)", selector: { number: { min: 0, max: 48, mode: "box" } } },
       { name: "card_padding", label: "Card padding (px)", selector: { number: { min: 0, max: 48, mode: "box" } } }
     ),
@@ -2146,6 +2146,7 @@ class LauncherCardEditor extends HTMLElement {
     return {
       ...DEFAULTS,
       ...c,
+      align: c.align === "center" || c.align === undefined ? "spread" : c.align,
       columns_mode: c.columns === undefined || c.columns === "auto" ? "auto" : "fixed",
       columns_count: typeof c.columns === "number" ? c.columns : Number(c.columns) || 4,
       rows_mode: c.rows_per_page === undefined || c.rows_per_page === "auto" ? "auto" : "fixed",
