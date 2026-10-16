@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.14";
+const CARD_VERSION = "0.2.15";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -394,6 +394,9 @@ class LauncherCard extends HTMLElement {
 
   setConfig(config) {
     if (!config || !Array.isArray(config.apps)) throw new Error("launcher-card: 'apps' list is required");
+    const cfgKey = JSON.stringify(config);
+    if (this._els && cfgKey === this._cfgKey) return;
+    this._cfgKey = cfgKey;
     const c = { ...DEFAULTS, ...config };
     if (config.badge_size === undefined && config.icon_size !== undefined) {
       c.badge_size = config.icon_size;
@@ -559,6 +562,21 @@ class LauncherCard extends HTMLElement {
     return els.map((_, i) => i);
   }
 
+  _scheduleLayout() {
+    if (this._layoutQueued) return;
+    this._layoutQueued = true;
+    requestAnimationFrame(() => {
+      this._layoutQueued = false;
+      this._layout();
+    });
+  }
+
+  _hookFonts() {
+    if (this._fontsHooked || !(document.fonts && document.fonts.ready)) return;
+    this._fontsHooked = true;
+    document.fonts.ready.then(() => this._scheduleLayout());
+  }
+
   _registerTyping() {
     const c = this._config;
     if (this.isConnected && c && c.search && c.search_type_anywhere) SEARCH_CARDS.add(this);
@@ -621,7 +639,7 @@ class LauncherCard extends HTMLElement {
     if (bar) bar.classList.toggle("has", q.length > 0);
     root.querySelector(".empty").hidden = shown > 0 || !this._els.length;
     this._paginate();
-    requestAnimationFrame(() => this._layout());
+    this._scheduleLayout();
   }
 
   _captureKey(e) {
@@ -827,7 +845,7 @@ class LauncherCard extends HTMLElement {
         dragging = true;
         pagesEl.setPointerCapture(e.pointerId);
         pagesEl.classList.add("dragging");
-        if (down.app) down.app.dispatchEvent(new PointerEvent("pointercancel"));
+        if (down.app) this._cancelPress(down.app);
       }
       pagesEl.scrollLeft = down.left - dx;
     });
@@ -968,7 +986,7 @@ class LauncherCard extends HTMLElement {
       ? this._spread() && cols > 1
         ? `grid-template-columns:repeat(${cols}, ${m.cellW}px); column-gap:0; row-gap:${m.gap}px;`
         : `grid-template-columns:repeat(${cols}, minmax(0, 1fr)); column-gap:0; row-gap:${m.gap}px;`
-      : this._spread()
+      : this._spread() || c.pages
         ? `grid-template-columns:repeat(auto-fill, ${m.cellW}px); gap:${m.gap}px;`
         : `grid-template-columns:repeat(auto-fit, ${m.cellW}px); gap:${m.gap}px;`;
     const maxCols = this._maxCols();
@@ -1235,6 +1253,8 @@ class LauncherCard extends HTMLElement {
     const style = styleName(c.badge_style);
     const frag = document.createDocumentFragment();
     this._els = [];
+    this._byEl = new WeakMap();
+    this._bindGrid(this.shadowRoot.querySelector(".pages"));
 
     const apps = c.sort === "name"
       ? [...c.apps].sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base", numeric: true }))
@@ -1312,9 +1332,10 @@ class LauncherCard extends HTMLElement {
         el.appendChild(n);
       }
 
-      this._bindActions(el, app);
       frag.appendChild(el);
-      this._els.push({ app, el, notify, haystack: normalize([app.name, ...keywordList(app.keywords)].filter(Boolean).join(" ")) });
+      const item = { app, el, notify, haystack: normalize([app.name, ...keywordList(app.keywords)].filter(Boolean).join(" ")), timer: 0, held: false, tapTimer: 0 };
+      this._byEl.set(el, item);
+      this._els.push(item);
     });
 
     gridEl.appendChild(frag);
@@ -1324,8 +1345,8 @@ class LauncherCard extends HTMLElement {
     this._paginate();
     this._update(true);
     this._maybeAppear();
-    requestAnimationFrame(() => this._layout());
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => this._layout());
+    this._scheduleLayout();
+    this._hookFonts();
   }
 
   _update(force) {
@@ -1358,78 +1379,111 @@ class LauncherCard extends HTMLElement {
     }
   }
 
-  _bindActions(el, app) {
-    const has = (k) => this._config.gestures && app[k] && app[k].action && app[k].action !== "none";
-    let timer = null, held = false, tapTimer = null;
+  _cancelPress(el) {
+    const item = this._byEl && this._byEl.get(el);
+    if (!item) return;
+    clearTimeout(item.timer);
+    el.classList.remove("pressed");
+  }
 
-    el.addEventListener("pointerdown", (e) => {
+  _bindGrid(root) {
+    const itemOf = (e) => {
+      const el = e.target && e.target.closest ? e.target.closest(".app") : null;
+      return el ? this._byEl.get(el) : null;
+    };
+    const has = (item, k) => this._config.gestures && item.app[k] && item.app[k].action && item.app[k].action !== "none";
+    const tapped = (el) => {
+      el.classList.remove("tapped");
+      void el.offsetWidth;
+      el.classList.add("tapped");
+    };
+
+    root.addEventListener("pointerdown", (e) => {
       if (e.button) return;
-      held = false;
-      el.classList.add("pressed");
-      if (has("hold_action")) {
-        timer = setTimeout(() => {
-          held = true;
-          el.classList.remove("pressed");
-          this._act(app, "hold");
+      const item = itemOf(e);
+      if (!item) return;
+      item.held = false;
+      item.el.classList.add("pressed");
+      if (has(item, "hold_action")) {
+        item.timer = setTimeout(() => {
+          item.held = true;
+          item.el.classList.remove("pressed");
+          this._act(item.app, "hold");
         }, 500);
       }
     });
-    const cancel = () => {
-      clearTimeout(timer);
-      el.classList.remove("pressed");
-    };
-    ["pointerup", "pointerleave", "pointercancel"].forEach((t) => el.addEventListener(t, cancel));
-    el.addEventListener("contextmenu", (e) => has("hold_action") && e.preventDefault());
+    for (const type of ["pointerup", "pointercancel"]) {
+      root.addEventListener(type, (e) => {
+        const item = itemOf(e);
+        if (item) this._cancelPress(item.el);
+      });
+    }
+    root.addEventListener("pointerout", (e) => {
+      const item = itemOf(e);
+      if (item && !item.el.contains(e.relatedTarget)) {
+        this._cancelPress(item.el);
+        if (this._config.hover_animation === "tilt") {
+          const badge = item.el.querySelector(".badge");
+          badge.style.removeProperty("--rx");
+          badge.style.removeProperty("--ry");
+        }
+      }
+    });
+    root.addEventListener("contextmenu", (e) => {
+      const item = itemOf(e);
+      if (item && has(item, "hold_action")) e.preventDefault();
+    });
 
     if (this._config.hover_animation === "tilt") {
-      const badge = el.querySelector(".badge");
-      el.addEventListener("pointermove", (e) => {
+      root.addEventListener("pointermove", (e) => {
         if (e.pointerType !== "mouse") return;
+        const item = itemOf(e);
+        if (!item) return;
+        const badge = item.badge || (item.badge = item.el.querySelector(".badge"));
         const r = badge.getBoundingClientRect();
         const x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5;
         badge.style.setProperty("--ry", `${(x * 22).toFixed(1)}deg`);
         badge.style.setProperty("--rx", `${(-y * 22).toFixed(1)}deg`);
       });
-      el.addEventListener("pointerleave", () => {
-        badge.style.removeProperty("--rx");
-        badge.style.removeProperty("--ry");
-      });
     }
 
-    const tapped = () => {
-      el.classList.remove("tapped");
-      void el.offsetWidth;
-      el.classList.add("tapped");
-    };
-    el.addEventListener("animationend", () => el.classList.remove("tapped"));
+    root.addEventListener("animationend", (e) => {
+      const item = itemOf(e);
+      if (item) item.el.classList.remove("tapped");
+    });
 
-    el.addEventListener("click", () => {
-      if (held) {
-        held = false;
+    root.addEventListener("click", (e) => {
+      const item = itemOf(e);
+      if (!item) return;
+      if (item.held) {
+        item.held = false;
         return;
       }
-      tapped();
-      if (has("double_tap_action")) {
-        if (tapTimer) {
-          clearTimeout(tapTimer);
-          tapTimer = null;
-          this._act(app, "double_tap");
+      tapped(item.el);
+      if (has(item, "double_tap_action")) {
+        if (item.tapTimer) {
+          clearTimeout(item.tapTimer);
+          item.tapTimer = 0;
+          this._act(item.app, "double_tap");
         } else {
-          tapTimer = setTimeout(() => {
-            tapTimer = null;
-            this._act(app, "tap");
+          item.tapTimer = setTimeout(() => {
+            item.tapTimer = 0;
+            this._act(item.app, "tap");
           }, 250);
         }
-      } else this._act(app, "tap");
+      } else this._act(item.app, "tap");
     });
-    el.addEventListener("keydown", (e) => {
+
+    root.addEventListener("keydown", (e) => {
+      const item = itemOf(e);
+      if (!item) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        tapped();
-        this._act(app, "tap");
+        tapped(item.el);
+        this._act(item.app, "tap");
       } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) {
         e.preventDefault();
-        this._moveFocus(el, e.key);
+        this._moveFocus(item.el, e.key);
       }
     });
   }
@@ -1520,7 +1574,73 @@ class LauncherCard extends HTMLElement {
 }
 
 
+const WHEEL = 192;
+let wheelPolar = null;
+const wheelImages = new Map();
+function wheelImage(brightness) {
+  const key = Math.round(brightness * 100);
+  let img = wheelImages.get(key);
+  if (img) return img;
+  const n = WHEEL, R = n / 2;
+  if (!wheelPolar) {
+    const hue = new Float32Array(n * n), sat = new Float32Array(n * n), alpha = new Uint8ClampedArray(n * n);
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const dx = x - R + 0.5, dy = y - R + 0.5, d = Math.hypot(dx, dy), i = y * n + x;
+        if (d > R) continue;
+        let a = Math.atan2(dy, dx);
+        if (a < 0) a += 2 * Math.PI;
+        hue[i] = (a / (2 * Math.PI)) * 6;
+        sat[i] = d / R;
+        alpha[i] = Math.min(1, R - d) * 255;
+      }
+    }
+    wheelPolar = { hue, sat, alpha };
+  }
+  const { hue, sat, alpha } = wheelPolar;
+  const v = key / 100;
+  img = new ImageData(n, n);
+  const d = img.data;
+  for (let i = 0, j = 0; i < n * n; i++, j += 4) {
+    if (!alpha[i]) continue;
+    const h = hue[i], s = sat[i], k = h | 0, fr = h - k;
+    const p = v * (1 - s), q = v * (1 - s * fr), t = v * (1 - s * (1 - fr));
+    let r, g, b;
+    switch (k % 6) {
+      case 0: r = v; g = t; b = p; break;
+      case 1: r = q; g = v; b = p; break;
+      case 2: r = p; g = v; b = t; break;
+      case 3: r = p; g = q; b = v; break;
+      case 4: r = t; g = p; b = v; break;
+      default: r = v; g = p; b = q;
+    }
+    d[j] = r * 255; d[j + 1] = g * 255; d[j + 2] = b * 255; d[j + 3] = alpha[i];
+  }
+  if (wheelImages.size >= 12) wheelImages.delete(wheelImages.keys().next().value);
+  wheelImages.set(key, img);
+  return img;
+}
+
 class LauncherColorPicker extends HTMLElement {
+  connectedCallback() {
+    if (!this._io && typeof IntersectionObserver === "function") {
+      this._io = new IntersectionObserver((entries) => {
+        this._visible = entries[entries.length - 1].isIntersecting;
+        if (this._visible && this._dirty) {
+          this._dirty = false;
+          this._drawWheel();
+        }
+      });
+    }
+    if (this._io) this._io.observe(this);
+    else this._visible = true;
+  }
+
+  disconnectedCallback() {
+    if (this._io) this._io.disconnect();
+    this._visible = false;
+  }
+
   constructor() {
     super();
     this._value = "";
@@ -1559,7 +1679,7 @@ class LauncherColorPicker extends HTMLElement {
         <button class="clr" title="Clear">×</button>
       </div>
       <div class="panel" hidden>
-        <div class="wheel"><canvas width="320" height="320"></canvas><div class="mk"></div></div>
+        <div class="wheel"><canvas width="192" height="192"></canvas><div class="mk"></div></div>
         <div class="side">Brightness<input class="val" type="range" min="0" max="100">
           <div class="alpha-row" hidden>Opacity<input class="alp" type="range" min="0" max="100"></div></div>
       </div>`;
@@ -1679,6 +1799,10 @@ class LauncherColorPicker extends HTMLElement {
   }
 
   _drawWheel() {
+    if (this._visible === false || (this._io && !this._visible)) {
+      this._dirty = true;
+      return;
+    }
     if (this._drawRaf) return;
     this._drawRaf = requestAnimationFrame(() => {
       this._drawRaf = null;
@@ -1687,25 +1811,10 @@ class LauncherColorPicker extends HTMLElement {
   }
 
   _renderWheel() {
-    const v = this._hsv[2];
-    if (this._drawnV === v) return;
-    this._drawnV = v;
-    const size = this._canvas.width, R = size / 2;
-    const ctx = this._canvas.getContext("2d");
-    const img = ctx.createImageData(size, size);
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const dx = x - R + 0.5, dy = y - R + 0.5, d = Math.hypot(dx, dy);
-        if (d > R) continue;
-        let h = (Math.atan2(dy, dx) * 180) / Math.PI;
-        if (h < 0) h += 360;
-        const [r, g, b] = hsvToRgb(h, d / R, v);
-        const i = (y * size + x) * 4;
-        img.data[i] = r; img.data[i + 1] = g; img.data[i + 2] = b;
-        img.data[i + 3] = Math.min(1, R - d) * 255;
-      }
-    }
-    ctx.putImageData(img, 0, 0);
+    const key = Math.round(this._hsv[2] * 100);
+    if (this._drawnV === key) return;
+    this._drawnV = key;
+    this._canvas.getContext("2d").putImageData(wheelImage(this._hsv[2]), 0, 0);
   }
 
   _emit(v, fromText) {
@@ -1935,7 +2044,23 @@ class LauncherCardEditor extends HTMLElement {
 
   set hass(h) {
     this._hass = h;
-    this._root.querySelectorAll("ha-form").forEach((f) => (f.hass = h));
+    if (!this._hassSeen) {
+      this._hassSeen = true;
+      this._pushHass();
+      return;
+    }
+    if (this._hassTimer) return;
+    this._hassTimer = setTimeout(() => {
+      this._hassTimer = null;
+      this._pushHass();
+    }, 400);
+  }
+
+  _pushHass() {
+    if (!this._hass) return;
+    for (const form of this._root.querySelectorAll("ha-form")) {
+      if (form.hass !== this._hass && form.offsetParent !== null) form.hass = this._hass;
+    }
   }
 
   _emit(config) {
@@ -2062,6 +2187,7 @@ class LauncherCardEditor extends HTMLElement {
         panels[t.id].hidden = t.id !== id;
       }
       onSelect(id);
+      this._pushHass();
     };
     for (const t of tabs) {
       const b = document.createElement("button");
@@ -2142,7 +2268,12 @@ class LauncherCardEditor extends HTMLElement {
   _buildRow(i) {
     const details = document.createElement("details");
     details.className = "app-box";
-    details.addEventListener("toggle", () => (details.open ? this._open.add(i) : this._open.delete(i)));
+    details.addEventListener("toggle", () => {
+      if (details.open) {
+        this._open.add(i);
+        this._pushHass();
+      } else this._open.delete(i);
+    });
 
     const summary = document.createElement("summary");
     summary.innerHTML = `<ha-icon class="chev" icon="mdi:chevron-right"></ha-icon><div class="chip"></div>
