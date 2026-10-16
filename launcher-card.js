@@ -1,5 +1,5 @@
 (() => { "use strict";
-const CARD_VERSION = "0.2.19";
+const CARD_VERSION = "0.2.20";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -729,6 +729,21 @@ class LauncherCard extends HTMLElement {
         if (grid.style.rowGap !== gap) grid.style.rowGap = gap;
       }
     }
+    if (this._config.show_names) {
+      const edges = [];
+      for (const grid of grids) {
+        const gl = grid.offsetLeft, gw = grid.clientWidth;
+        for (const a of grid.children) {
+          if (a.classList.contains("filtered")) continue;
+          const x = a.offsetLeft - gl;
+          edges.push([a, x <= 1, x + a.offsetWidth >= gw - 1]);
+        }
+      }
+      for (const [a, l, r] of edges) {
+        if (a.classList.contains("edge-l") !== l) a.classList.toggle("edge-l", l);
+        if (a.classList.contains("edge-r") !== r) a.classList.toggle("edge-r", r);
+      }
+    }
     if (this._config.name_overflow !== "scroll") return;
     const speed = Math.max(5, num(this._config.marquee_speed, 30));
     const names = [...this.shadowRoot.querySelectorAll(".app:not(.filtered) .name")];
@@ -842,6 +857,7 @@ class LauncherCard extends HTMLElement {
     }
     if (!show) {
       this._page = 0;
+      this._markDots();
       return;
     }
     if (dots.children.length !== n) {
@@ -850,12 +866,12 @@ class LauncherCard extends HTMLElement {
         const b = document.createElement("button");
         b.className = "dot";
         b.setAttribute("aria-label", `Page ${i + 1}`);
-        b.addEventListener("click", () => pagesEl.scrollTo({ left: i * pagesEl.clientWidth, behavior: "smooth" }));
+        b.addEventListener("click", () => pagesEl.scrollTo({ left: this._pageLeft(i), behavior: "smooth" }));
         dots.appendChild(b);
       }
     }
     this._page = Math.min(this._page || 0, n - 1);
-    const left = this._page * pagesEl.clientWidth;
+    const left = this._pageLeft(this._page);
     if (Math.abs(pagesEl.scrollLeft - left) > 1) pagesEl.scrollLeft = left;
     this._markDots();
   }
@@ -888,7 +904,7 @@ class LauncherCard extends HTMLElement {
         const start = Math.round(down.left / w);
         const target = Math.max(0, Math.min(this._pageCount - 1, start + (dx < -w * 0.15 ? 1 : dx > w * 0.15 ? -1 : 0)));
         pagesEl.classList.remove("dragging");
-        pagesEl.scrollTo({ left: target * w, behavior: "smooth" });
+        pagesEl.scrollTo({ left: this._pageLeft(target), behavior: "smooth" });
         suppress = true;
         setTimeout(() => (suppress = false), 0);
       }
@@ -919,7 +935,7 @@ class LauncherCard extends HTMLElement {
         lockUntil = now + 450;
         this._page = target;
         this._markDots();
-        pagesEl.scrollTo({ left: target * pagesEl.clientWidth, behavior: "smooth" });
+        pagesEl.scrollTo({ left: this._pageLeft(target), behavior: "smooth" });
       },
       { passive: false }
     );
@@ -934,9 +950,19 @@ class LauncherCard extends HTMLElement {
     );
   }
 
+  _pageLeft(i) {
+    const pagesEl = this.shadowRoot && this.shadowRoot.querySelector(".pages");
+    const page = pagesEl && pagesEl.children[i];
+    return page ? page.offsetLeft : 0;
+  }
+
   _markDots() {
-    const dots = this.shadowRoot.querySelector(".dots");
-    if (dots) [...dots.children].forEach((d, i) => d.classList.toggle("active", i === (this._page || 0)));
+    const root = this.shadowRoot;
+    const cur = this._page || 0;
+    const dots = root.querySelector(".dots");
+    if (dots) [...dots.children].forEach((d, i) => d.classList.toggle("active", i === cur));
+    const pagesEl = root.querySelector(".pages");
+    if (pagesEl) [...pagesEl.children].forEach((p, i) => p.classList.toggle("current", i === cur));
   }
 
   _spread() {
@@ -1112,7 +1138,7 @@ class LauncherCard extends HTMLElement {
 
     add(`:host{display:block}
       ha-card{${c.card_background ? "" : "background:none;box-shadow:none;border:none;"}overflow:hidden}
-      .pages{display:flex}
+      .pages{display:flex;position:relative}
       .page{flex:0 0 100%;min-width:0;box-sizing:border-box}
       .grid{display:grid;${gridCols}${gridBox}justify-items:center;justify-content:${justify};${c.icon_color ? `--glob-ic:${css(c.icon_color)};` : ""}}
       .empty{text-align:center;color:var(--secondary-text-color);font-size:14px;margin:-4px ${m.side}px ${pad}px}
@@ -1129,7 +1155,7 @@ class LauncherCard extends HTMLElement {
         .pages.paged::-webkit-scrollbar{display:none}
         .pages.paged.dragging{scroll-snap-type:none;cursor:grabbing;user-select:none;-webkit-user-select:none}
         .pages.paged.dragging .app{pointer-events:none}
-        .page{scroll-snap-align:start;scroll-snap-stop:always;overflow:clip;contain:paint}
+        .page{scroll-snap-align:start;scroll-snap-stop:always;overflow:clip;contain:paint;-webkit-clip-path:inset(0);clip-path:inset(0)}
         .dots{display:flex;justify-content:center;align-items:center;gap:8px;padding:0 0 ${Math.max(10, pad)}px}
         .dot{width:8px;height:8px;padding:0;border:none;border-radius:4px;cursor:pointer;flex:none;
           background:var(--divider-color,rgba(127,127,127,.4));transition:width .25s ease,background-color .25s ease}
@@ -1205,7 +1231,10 @@ class LauncherCard extends HTMLElement {
           ${["uppercase", "lowercase", "capitalize"].includes(c.name_transform) ? `text-transform:${c.name_transform};letter-spacing:.02em;` : ""}
           ${c.name_shadow ? `text-shadow:0 1px ${Math.max(0, num(c.name_shadow_blur, 3))}px ${css(c.name_shadow_color) || "rgba(0,0,0,.65)"};` : ""}}
         .track,.t{display:inline-block;white-space:nowrap}
-        .track{max-width:100%}`);
+        .track{max-width:100%}
+        .edge-l .name{width:calc(100% + 8px);margin:0 -8px 0 0}
+        .edge-r .name{width:calc(100% + 8px);margin:0 0 0 -8px}
+        .edge-l.edge-r .name{width:100%;margin:0}`);
       if (overflow === "wrap") {
         add(`.track,.t{display:block;white-space:normal}
           .t{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}`);
@@ -1218,6 +1247,7 @@ class LauncherCard extends HTMLElement {
           .marquee .track{max-width:none;animation:lc-marquee var(--dur,8s) linear infinite;will-change:transform}
           .marquee .t.clone{display:inline-block}
           .offscreen .marquee .track{animation-play-state:paused}
+          .paged .page:not(.current) .marquee .track{animation:none;transform:none}
           @keyframes lc-marquee{from{transform:translateX(0)}to{transform:translateX(calc(-1 * var(--dist)))}}
           @media (prefers-reduced-motion:reduce){
             .marquee{-webkit-mask-image:none;mask-image:none;text-align:center}
