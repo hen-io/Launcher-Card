@@ -1,5 +1,5 @@
 
-const CARD_VERSION = "0.2.13";
+const CARD_VERSION = "0.2.14";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -57,7 +57,8 @@ const DEFAULTS = {
   columns: "auto",
   badge_size: 60,
   gap: 18,
-  align: "center",
+  align: "spread",
+  side_padding: 0,
   border_radius: "theme",
   badge_style: "gradient",
   gradient_angle: 145,
@@ -651,7 +652,8 @@ class LauncherCard extends HTMLElement {
     const minimalIcon = fixedIcon || scaled(0.8);
     const image = fixedIcon || Math.round(badge * (Number(c.image_scale) || 0.62));
     const pad = Math.max(0, num(c.card_padding, 16));
-    return { badge, lineH, labelGap, cellH, icon, minimalIcon, image, pad, gap: Math.max(0, num(c.gap, 18)) };
+    const side = Math.max(0, num(c.side_padding, 0));
+    return { badge, lineH, labelGap, cellH, cellW: badge, icon, minimalIcon, image, pad, side, gap: Math.max(0, num(c.gap, 18)) };
   }
 
   _layout() {
@@ -671,7 +673,8 @@ class LauncherCard extends HTMLElement {
     const cols = this._fixedCols();
     if (cols) {
       for (const grid of grids) {
-        const pitch = grid.clientWidth / cols;
+        const w = grid.clientWidth;
+        const pitch = this._spread() && cols > 1 ? (w - m.cellW) / (cols - 1) : w / cols;
         if (!pitch) continue;
         const gap = `${Math.max(4, Math.round(pitch - m.cellH))}px`;
         if (grid.style.rowGap !== gap) grid.style.rowGap = gap;
@@ -710,10 +713,12 @@ class LauncherCard extends HTMLElement {
     if (c.pages && width === 0 && this._pageCount) return;
     if (c.pages && width > 0) {
       const m = this._metrics();
-      const W = Math.max(1, width - 2 * m.pad);
+      const W = Math.max(1, width - 2 * m.side);
       const fixed = this._fixedCols();
-      const cols = fixed || Math.max(1, Math.min(this._maxCols() || Infinity, Math.floor((W + m.gap) / (m.cellH + m.gap))));
-      const rowPitch = fixed ? Math.max(m.cellH + 4, W / cols) : m.cellH + m.gap;
+      const cols = fixed || Math.max(1, Math.min(this._maxCols() || Infinity, Math.floor((W + m.gap) / (m.cellW + m.gap))));
+      const rowPitch = fixed
+        ? Math.max(m.cellH + 4, this._spread() && cols > 1 ? (W - m.cellW) / (cols - 1) : W / cols)
+        : m.cellH + m.gap;
       let rows;
       if (c.rows_per_page === "auto" || c.rows_per_page === undefined || c.rows_per_page === "") {
         const top = Math.min(Math.max(this._stableTop(pagesEl), 0), window.innerHeight * 0.5);
@@ -885,6 +890,10 @@ class LauncherCard extends HTMLElement {
     if (dots) [...dots.children].forEach((d, i) => d.classList.toggle("active", i === (this._page || 0)));
   }
 
+  _spread() {
+    return this._config.align === "spread";
+  }
+
   _maxCols() {
     return this._fixedCols() ? 0 : Math.max(0, Math.round(num(this._config.max_columns, 0)));
   }
@@ -942,7 +951,7 @@ class LauncherCard extends HTMLElement {
     const hasNotify = c.notifications && apps.some(hasNotifyConfig);
     const hasEntity = c.entity_states && apps.some((a) => a.entity);
     const overflow = c.name_overflow;
-    const justify = { start: "start", end: "end", center: "center" }[c.align] || "center";
+    const justify = { start: "start", end: "end", center: "center", spread: "space-between" }[c.align] || "space-between";
     const radius = this._radius();
     const border = Math.max(0, num(c.badge_border, 0));
     const ang = num(c.gradient_angle, 145);
@@ -956,13 +965,18 @@ class LauncherCard extends HTMLElement {
       })[c.gradient_type] || `linear-gradient(${ang}deg, ${a}, ${b})`;
     const grad = g("var(--c1)", "var(--c2)");
     const gridCols = cols
-      ? `grid-template-columns:repeat(${cols}, minmax(0, 1fr)); column-gap:0; row-gap:${m.gap}px;`
-      : `grid-template-columns:repeat(auto-fit, ${m.cellH}px); gap:${m.gap}px;`;
+      ? this._spread() && cols > 1
+        ? `grid-template-columns:repeat(${cols}, ${m.cellW}px); column-gap:0; row-gap:${m.gap}px;`
+        : `grid-template-columns:repeat(${cols}, minmax(0, 1fr)); column-gap:0; row-gap:${m.gap}px;`
+      : this._spread()
+        ? `grid-template-columns:repeat(auto-fill, ${m.cellW}px); gap:${m.gap}px;`
+        : `grid-template-columns:repeat(auto-fit, ${m.cellW}px); gap:${m.gap}px;`;
     const maxCols = this._maxCols();
-    const side = { start: `${pad}px auto ${pad}px ${pad}px`, end: `${pad}px ${pad}px ${pad}px auto` }[c.align] || `${pad}px auto`;
+    const sd = m.side;
+    const side = { start: `${pad}px auto ${pad}px ${sd}px`, end: `${pad}px ${sd}px ${pad}px auto` }[c.align] || `${pad}px auto`;
     const gridBox = maxCols
-      ? `width:min(calc(100% - ${2 * pad}px), ${maxCols * m.cellH + (maxCols - 1) * m.gap}px);margin:${side};`
-      : `margin:${pad}px;`;
+      ? `width:min(calc(100% - ${2 * sd}px), ${maxCols * m.cellW + (maxCols - 1) * m.gap}px);margin:${side};`
+      : `margin:${pad}px ${sd}px;`;
 
     const press = c.press_animation;
     const scaleT = press === "spring" ? ".4s cubic-bezier(.2,1.7,.4,1)" : ".18s cubic-bezier(.3,.7,.4,1.4)";
@@ -1050,7 +1064,7 @@ class LauncherCard extends HTMLElement {
       .pages{display:flex}
       .page{flex:0 0 100%;min-width:0;box-sizing:border-box}
       .grid{display:grid;${gridCols}${gridBox}justify-items:center;justify-content:${justify};${c.icon_color ? `--glob-ic:${css(c.icon_color)};` : ""}}
-      .empty{text-align:center;color:var(--secondary-text-color);font-size:14px;margin:-4px ${pad}px ${pad}px}
+      .empty{text-align:center;color:var(--secondary-text-color);font-size:14px;margin:-4px ${m.side}px ${pad}px}
       .empty[hidden],.dots[hidden]{display:none}`);
 
     if (c.title) {
@@ -1072,7 +1086,7 @@ class LauncherCard extends HTMLElement {
     }
 
     if (c.search) {
-      add(`.search{margin:${pad}px ${pad}px 0;display:flex;align-items:center;gap:8px;height:40px;padding:0 8px 0 12px;box-sizing:border-box;
+      add(`.search{margin:${pad}px ${m.side}px 0;display:flex;align-items:center;gap:8px;height:40px;padding:0 8px 0 12px;box-sizing:border-box;
           border-radius:20px;color:var(--secondary-text-color);cursor:text;background:rgba(127,127,127,.12);
           box-shadow:inset 0 0 0 1px rgba(127,127,127,.15);transition:box-shadow .2s ease}
         .search:focus-within{box-shadow:inset 0 0 0 2px var(--primary-color)}
@@ -1133,7 +1147,7 @@ class LauncherCard extends HTMLElement {
 
     if (c.show_names) {
       const lines = overflow === "wrap" ? 2 : 1;
-      add(`.name{font-size:${num(c.name_size, 12)}px;line-height:${m.lineH}px;height:${m.lineH * lines}px;width:100%;text-align:center;
+      add(`.name{font-size:${num(c.name_size, 12)}px;line-height:${m.lineH}px;height:${m.lineH * lines}px;width:calc(100% + 16px);margin:0 -8px;text-align:center;
           overflow:hidden;color:${css(c.name_color) || "var(--primary-text-color)"};
           ${c.name_weight ? `font-weight:${num(c.name_weight, 400)};` : ""}
           ${["uppercase", "lowercase", "capitalize"].includes(c.name_transform) ? `text-transform:${c.name_transform};letter-spacing:.02em;` : ""}
@@ -1755,7 +1769,8 @@ const GENERAL_SCHEMAS = {
       { name: "badge_size", label: "Badge size (px)", selector: { number: { min: 24, max: 160, mode: "box" } } },
       { name: "icon_percent", label: "Icon size (% of badge, empty = auto)", selector: { number: { min: 10, max: 100, step: 1, mode: "box", unit_of_measurement: "%" } } },
       { name: "gap", label: "Spacing (px)", selector: { number: { min: 0, max: 60, mode: "box" } } },
-      { name: "align", label: "Grid alignment", selector: { select: { mode: "dropdown", options: opt({ start: "Left", center: "Center", end: "Right" }) } } },
+      { name: "align", label: "Grid alignment", selector: { select: { mode: "dropdown", options: opt({ spread: "Spread to edges", start: "Left", center: "Center", end: "Right" }) } } },
+      { name: "side_padding", label: "Side padding (px)", selector: { number: { min: 0, max: 48, mode: "box" } } },
       { name: "card_padding", label: "Card padding (px)", selector: { number: { min: 0, max: 48, mode: "box" } } }
     ),
     grid(
