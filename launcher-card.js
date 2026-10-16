@@ -1,5 +1,5 @@
 (() => { "use strict";
-const CARD_VERSION = "0.2.20";
+const CARD_VERSION = "0.2.21";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -84,6 +84,7 @@ const DEFAULTS = {
   sort: "none",
   pages: false,
   rows_per_page: "auto",
+  page_gap: 32,
   appear_animation: "rise",
   appear_order: "sequence",
   appear_trigger: "load",
@@ -844,9 +845,9 @@ class LauncherCard extends HTMLElement {
       pagesEl.addEventListener(
         "scroll",
         () => {
-          const w = pagesEl.clientWidth;
+          const w = this._pageStep(pagesEl);
           if (!w) return;
-          const idx = Math.round(pagesEl.scrollLeft / w);
+          const idx = Math.max(0, Math.min(this._pageCount - 1, Math.round(pagesEl.scrollLeft / w)));
           if (idx !== this._page) {
             this._page = idx;
             this._markDots();
@@ -901,7 +902,7 @@ class LauncherCard extends HTMLElement {
       if (dragging) {
         const w = pagesEl.clientWidth || 1;
         const dx = e.clientX - down.x;
-        const start = Math.round(down.left / w);
+        const start = Math.round(down.left / (this._pageStep(pagesEl) || w));
         const target = Math.max(0, Math.min(this._pageCount - 1, start + (dx < -w * 0.15 ? 1 : dx > w * 0.15 ? -1 : 0)));
         pagesEl.classList.remove("dragging");
         pagesEl.scrollTo({ left: this._pageLeft(target), behavior: "smooth" });
@@ -954,6 +955,12 @@ class LauncherCard extends HTMLElement {
     const pagesEl = this.shadowRoot && this.shadowRoot.querySelector(".pages");
     const page = pagesEl && pagesEl.children[i];
     return page ? page.offsetLeft : 0;
+  }
+
+  _pageStep(pagesEl) {
+    const pages = pagesEl.children;
+    if (pages.length > 1) return pages[1].offsetLeft - pages[0].offsetLeft || pagesEl.clientWidth;
+    return pagesEl.clientWidth;
   }
 
   _markDots() {
@@ -1151,7 +1158,7 @@ class LauncherCard extends HTMLElement {
     }
 
     if (c.pages) {
-      add(`.pages.paged{overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain;cursor:grab}
+      add(`.pages.paged{gap:${Math.max(0, num(c.page_gap, 32))}px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain;cursor:grab}
         .pages.paged::-webkit-scrollbar{display:none}
         .pages.paged.dragging{scroll-snap-type:none;cursor:grabbing;user-select:none;-webkit-user-select:none}
         .pages.paged.dragging .app{pointer-events:none}
@@ -1973,7 +1980,8 @@ const GENERAL_SCHEMAS = {
     grid(
       { name: "pages", label: "Split into pages", selector: { boolean: {} } },
       { name: "rows_mode", label: "Rows per page", selector: { select: { mode: "dropdown", options: opt({ auto: "Auto-fit to screen", fixed: "Fixed" }) } } },
-      { name: "rows_count", label: "Rows", selector: { number: { min: 1, max: 12, mode: "box" } } }
+      { name: "rows_count", label: "Rows", selector: { number: { min: 1, max: 12, mode: "box" } } },
+      { name: "page_gap", label: "Gap between pages (px)", selector: { number: { min: 0, max: 120, mode: "box" } } }
     ),
     { name: "card_background", label: "Card background", selector: { boolean: {} } },
     grid(
