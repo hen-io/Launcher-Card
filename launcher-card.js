@@ -1,5 +1,5 @@
-
-const CARD_VERSION = "0.2.15";
+(() => { "use strict";
+const CARD_VERSION = "0.2.16";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -128,6 +128,26 @@ const APPEAR_FROM = {
 const INACTIVE_STATES = ["off", "unavailable", "unknown", "idle", "closed", "not_home", "standby", "none", "0", ""];
 
 const isUrl = (s) => typeof s === "string" && /^(https?:)?\/\//.test(s);
+const hasScheme = (s) => /^[a-z][a-z0-9+.-]*:/i.test(s) || String(s).startsWith("//");
+const safeUrl = (u) => {
+  const s = String(u || "").trim();
+  if (!s) return null;
+  if (hasScheme(s) && !/^(https?:|mailto:|tel:|homeassistant:|\/\/)/i.test(s)) return null;
+  return s;
+};
+const safePath = (p) => {
+  const s = String(p || "").trim();
+  if (!s) return null;
+  if (hasScheme(s)) {
+    try {
+      const u = new URL(s, window.location.href);
+      return u.origin === window.location.origin ? u.pathname + u.search + u.hash : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  return s.startsWith("/") ? s : "/" + s;
+};
 const isImage = (s) =>
   typeof s === "string" &&
   (isUrl(s) || s.startsWith("/") || s.startsWith("data:") || /\.(png|jpe?g|svg|webp|gif|ico)(\?.*)?$/i.test(s));
@@ -176,11 +196,12 @@ function extractColors(src) {
     img.onerror = () => resolve(null);
     img.src = src;
   });
+  if (colorCache.size > 200) colorCache.delete(colorCache.keys().next().value);
   colorCache.set(src, p);
   return p;
 }
 
-const safe = (v) => String(v).replace(/[;{}<>\\]/g, "");
+const safe = (v) => String(v).replace(/\/\*|\*\//g, "").replace(/[;{}<>\\]/g, "");
 const css = (v) => (Array.isArray(v) ? `rgb(${v.slice(0, 3).map(Number).join(",")})` : v ? safe(v) : v);
 
 function appColors(app) {
@@ -372,6 +393,15 @@ if (!window.__launcherCardKeys) {
   );
 }
 
+function stateMatches(state, spec) {
+  const items = keywordList(spec).map((x) => x.toLowerCase());
+  const s = String(state).toLowerCase();
+  const pos = items.filter((x) => !x.startsWith("!"));
+  const neg = items.filter((x) => x.startsWith("!")).map((x) => x.slice(1));
+  if (!items.length) return !INACTIVE_STATES.includes(s);
+  return (!pos.length || pos.includes(s)) && !neg.includes(s);
+}
+
 const hasNotifyConfig = (a) => a.notify_entity || (a.notify_text !== undefined && a.notify_text !== "");
 
 class LauncherCard extends HTMLElement {
@@ -398,6 +428,7 @@ class LauncherCard extends HTMLElement {
     if (this._els && cfgKey === this._cfgKey) return;
     this._cfgKey = cfgKey;
     const c = { ...DEFAULTS, ...config };
+    c.apps = config.apps.filter((a) => a && typeof a === "object" && !Array.isArray(a));
     if (config.badge_size === undefined && config.icon_size !== undefined) {
       c.badge_size = config.icon_size;
       delete c.icon_size;
@@ -493,7 +524,7 @@ class LauncherCard extends HTMLElement {
           this._io = null;
           this._startAppear();
         },
-        { threshold: 0.15 }
+        { threshold: 0 }
       );
       this._io.observe(this);
     } else {
@@ -624,8 +655,8 @@ class LauncherCard extends HTMLElement {
     this._query = q;
     const words = normalize(q).split(/\s+/).filter(Boolean);
     let first = true, shown = 0;
-    for (const { el, haystack } of this._els) {
-      const hit = words.every((w) => haystack.includes(w));
+    for (const { el, haystack, condHidden } of this._els) {
+      const hit = !condHidden && words.every((w) => haystack.includes(w));
       el.classList.toggle("filtered", !hit);
       el.classList.toggle("first", hit && first);
       if (hit) {
@@ -637,7 +668,7 @@ class LauncherCard extends HTMLElement {
     root.querySelector("ha-card").classList.toggle("searching", words.length > 0);
     const bar = root.querySelector(".search");
     if (bar) bar.classList.toggle("has", q.length > 0);
-    root.querySelector(".empty").hidden = shown > 0 || !this._els.length;
+    root.querySelector(".empty").hidden = shown > 0 || !this._els.length || !words.length;
     this._paginate();
     this._scheduleLayout();
   }
@@ -657,8 +688,8 @@ class LauncherCard extends HTMLElement {
 
   _metrics() {
     const c = this._config;
-    const badge = Number(c.badge_size) || 60;
-    const nameSize = Number(c.name_size) || 12;
+    const badge = clamp(Number(c.badge_size) || 60, 16, 400);
+    const nameSize = clamp(Number(c.name_size) || 12, 6, 48);
     const lineH = Math.ceil(nameSize * 1.25);
     const nameLines = c.show_names ? (c.name_overflow === "wrap" ? 2 : 1) : 0;
     const labelGap = nameLines ? Math.max(0, num(c.name_gap, 7)) : 0;
@@ -924,14 +955,15 @@ class LauncherCard extends HTMLElement {
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
-    if (first && this._config && this._config.apps.some((a) => a.users)) this._render();
+    if (first && this._config && this._config.apps.some((a) => keywordList(a.users).length)) this._render();
     else this._update();
   }
 
   getCardSize() {
     const c = this._config;
-    const cols = c.columns === "auto" || !c.columns ? 4 : Number(c.columns);
-    return Math.max(1, Math.ceil(c.apps.length / cols) * 2);
+    if (!c) return 3;
+    const cols = this._fixedCols() || 4;
+    return Math.max(1, Math.ceil(c.apps.length / cols) * 2 + (c.title ? 1 : 0) + (c.search ? 1 : 0));
   }
 
   getGridOptions() {
@@ -948,10 +980,11 @@ class LauncherCard extends HTMLElement {
 
   _visible(app) {
     if (app.hidden) return false;
-    if (Array.isArray(app.users) && app.users.length) {
+    const users = keywordList(app.users);
+    if (users.length) {
       const u = this._hass && this._hass.user;
       if (!u) return false;
-      return app.users.some((x) => x === u.id || String(x).toLowerCase() === String(u.name).toLowerCase());
+      return users.some((x) => x === u.id || x.toLowerCase() === String(u.name).toLowerCase());
     }
     return true;
   }
@@ -1148,11 +1181,12 @@ class LauncherCard extends HTMLElement {
         ${c.icon_shadow === "none" ? "" : "filter:var(--ish);"}}
       img.cover{width:100%;height:100%;object-fit:cover;filter:none}`);
     if (hasNotify) {
-      add(`.notify{position:absolute;top:-6px;right:-6px;z-index:2;min-width:20px;height:20px;padding:0 6px;box-sizing:border-box;
+      const out = Math.min(6, m.side), outDot = Math.min(3, m.side);
+      add(`.notify{position:absolute;top:-6px;right:-${out}px;z-index:2;min-width:20px;height:20px;padding:0 6px;box-sizing:border-box;
           border-radius:10px;background:var(--notify-color,#ff3b30);color:#fff;font-size:11px;font-weight:600;
           display:none;align-items:center;justify-content:center;line-height:1;
           box-shadow:0 0 0 2px var(--card-background-color,#fff),0 2px 4px rgba(0,0,0,.3)}
-        .notify.dot{min-width:12px;width:12px;height:12px;padding:0;top:-3px;right:-3px}
+        .notify.dot{min-width:12px;width:12px;height:12px;padding:0;top:-3px;right:-${outDot}px}
         .notify.show{display:flex;animation:lc-pop .25s cubic-bezier(.3,.7,.4,1.6)}
         @keyframes lc-pop{from{transform:scale(0)}to{transform:scale(1)}}`);
     }
@@ -1165,7 +1199,7 @@ class LauncherCard extends HTMLElement {
 
     if (c.show_names) {
       const lines = overflow === "wrap" ? 2 : 1;
-      add(`.name{font-size:${num(c.name_size, 12)}px;line-height:${m.lineH}px;height:${m.lineH * lines}px;width:calc(100% + 16px);margin:0 -8px;text-align:center;
+      add(`.name{font-size:${clamp(num(c.name_size, 12), 6, 48)}px;line-height:${m.lineH}px;height:${m.lineH * lines}px;width:calc(100% + 16px);margin:0 -8px;text-align:center;
           overflow:hidden;color:${css(c.name_color) || "var(--primary-text-color)"};
           ${c.name_weight ? `font-weight:${num(c.name_weight, 400)};` : ""}
           ${["uppercase", "lowercase", "capitalize"].includes(c.name_transform) ? `text-transform:${c.name_transform};letter-spacing:.02em;` : ""}
@@ -1339,7 +1373,7 @@ class LauncherCard extends HTMLElement {
     });
 
     gridEl.appendChild(frag);
-    this._dynamic = this._els.some((x) => (c.entity_states && x.app.entity) || (c.notifications && x.app.notify_entity));
+    this._dynamic = this._els.some((x) => (c.entity_states && x.app.entity) || (c.notifications && x.app.notify_entity) || x.app.show_entity);
     this._page = Math.min(this._page || 0, 999);
     this._setupSearch();
     this._paginate();
@@ -1352,16 +1386,27 @@ class LauncherCard extends HTMLElement {
   _update(force) {
     if (!this._hass || !this._els || !this._dynamic) return;
     const states = this._hass.states;
+    let visibilityChanged = false;
     for (const item of this._els) {
       const { app, el, notify } = item;
       const nst = notify && app.notify_entity ? states[app.notify_entity] : undefined;
       const est = this._config.entity_states && app.entity ? states[app.entity] : undefined;
-      if (!force && item.nst === nst && item.est === est) continue;
+      const sst = app.show_entity ? states[app.show_entity] : undefined;
+      if (!force && item.nst === nst && item.est === est && item.sst === sst) continue;
       item.nst = nst;
       item.est = est;
+      item.sst = sst;
+      if (app.show_entity) {
+        const hide = !stateMatches(sst ? sst.state : "unavailable", app.show_state);
+        if (hide !== !!item.condHidden) {
+          item.condHidden = hide;
+          visibilityChanged = true;
+        }
+      }
       if (notify && app.notify_entity) {
         const st = nst;
-        const s = st ? String(st.state) : "";
+        const raw = st && app.notify_attribute ? st.attributes && st.attributes[app.notify_attribute] : st && st.state;
+        const s = raw === undefined || raw === null ? "" : String(raw);
         const n = Number(s);
         let text = null;
         if (s !== "" && !isNaN(n)) text = n > 0 ? (n > 99 ? "99+" : String(Math.round(n))) : null;
@@ -1373,10 +1418,14 @@ class LauncherCard extends HTMLElement {
       if (this._config.entity_states && app.entity) {
         const st = est;
         const s = st ? String(st.state) : "unavailable";
-        el.classList.toggle("active", !INACTIVE_STATES.includes(s) && !(Number(s) === 0 && s.trim() !== "" && !isNaN(Number(s))));
+        const active = app.active_states
+          ? stateMatches(s, app.active_states)
+          : !INACTIVE_STATES.includes(s) && !(Number(s) === 0 && s.trim() !== "" && !isNaN(Number(s)));
+        el.classList.toggle("active", active);
         el.classList.toggle("unavail", this._config.dim_unavailable && (s === "unavailable" || !st));
       }
     }
+    if (visibilityChanged) this._filter(this._query || "");
   }
 
   _cancelPress(el) {
@@ -1507,7 +1556,7 @@ class LauncherCard extends HTMLElement {
     if (app.tap_action) return app.tap_action;
     const path = app.path || app.navigation_path;
     if (path) {
-      return isUrl(path)
+      return hasScheme(path)
         ? { action: "url", url_path: path, new_tab: !!app.new_tab }
         : { action: "navigate", navigation_path: path, new_tab: !!app.new_tab };
     }
@@ -1527,8 +1576,8 @@ class LauncherCard extends HTMLElement {
 
     switch (a.action) {
       case "navigate": {
-        const path = a.navigation_path;
-        if (!path) return;
+        const path = safePath(a.navigation_path);
+        if (!path) return this._warn(`navigation to "${a.navigation_path}" was blocked`);
         if (a.new_tab) {
           window.open(path, "_blank", "noopener");
           return;
@@ -1538,11 +1587,13 @@ class LauncherCard extends HTMLElement {
         this._fire("location-changed", { replace: !!a.navigation_replace }, window);
         return;
       }
-      case "url":
-        if (!a.url_path) return;
-        if (a.new_tab === false) window.location.href = a.url_path;
-        else window.open(a.url_path, "_blank", "noopener");
+      case "url": {
+        const url = safeUrl(a.url_path);
+        if (!url) return a.url_path && this._warn(`opening "${a.url_path}" was blocked`);
+        if (a.new_tab === false) window.location.href = url;
+        else window.open(url, "_blank", "noopener,noreferrer");
         return;
+      }
       case "more-info":
         if (entity) this._fire("hass-more-info", { entityId: entity });
         return;
@@ -1553,7 +1604,8 @@ class LauncherCard extends HTMLElement {
       case "call-service": {
         const svc = a.perform_action || a.service;
         if (!svc || !this._hass) return;
-        const [domain, service] = svc.split(".", 2);
+        const [domain, service] = String(svc).split(".", 2);
+        if (!domain || !service) return this._warn(`"${svc}" is not a valid action`);
         this._call(domain, service, a.data || a.service_data || {}, a.target);
         return;
       }
@@ -1563,9 +1615,15 @@ class LauncherCard extends HTMLElement {
   }
 
   _call(domain, service, data, target) {
-    Promise.resolve(this._hass.callService(domain, service, data, target)).catch((err) =>
-      this._fire("hass-notification", { message: `Launcher-Card: ${(err && err.message) || err}` })
-    );
+    try {
+      Promise.resolve(this._hass.callService(domain, service, data, target)).catch((err) => this._warn((err && err.message) || err));
+    } catch (err) {
+      this._warn((err && err.message) || err);
+    }
+  }
+
+  _warn(message) {
+    this._fire("hass-notification", { message: `Launcher-Card: ${message}` });
   }
 
   _fire(type, detail, target = this) {
@@ -1799,7 +1857,7 @@ class LauncherColorPicker extends HTMLElement {
   }
 
   _drawWheel() {
-    if (this._visible === false || (this._io && !this._visible)) {
+    if (typeof IntersectionObserver === "function" && this._visible !== true) {
       this._dirty = true;
       return;
     }
@@ -1956,6 +2014,7 @@ const APP_SCHEMAS = {
     ),
     { name: "path", label: "Navigation path or URL", selector: { text: {} } },
     { name: "keywords", label: "Search keywords (comma separated, e.g. lamp, living room, ceiling)", selector: { text: { multiline: true } } },
+    { name: "users", label: "Only for these users (comma separated names, empty = everyone)", selector: { text: {} } },
     grid(
       { name: "new_tab", label: "Open in new tab", selector: { boolean: {} } },
       { name: "fill", label: "Image fills badge", selector: { boolean: {} } },
@@ -1965,7 +2024,11 @@ const APP_SCHEMAS = {
   entity: [
     { name: "entity", label: "Entity (state dot, more-info, toggle)", selector: { entity: {} } },
     { name: "notify_entity", label: "Notification badge entity (count or on/off)", selector: { entity: {} } },
+    { name: "notify_attribute", label: "Read the count from this attribute (optional)", selector: { text: {} } },
     { name: "notify_text", label: "Static badge text (used when no entity is set)", selector: { text: {} } },
+    { name: "active_states", label: "States that count as active (comma separated, e.g. on, playing; empty = default)", selector: { text: {} } },
+    { name: "show_entity", label: "Only show this app while this entity…", selector: { entity: {} } },
+    { name: "show_state", label: "…is in state (comma separated; !off = any state except off; empty = active)", selector: { text: {} } },
   ],
   style: [
     { name: "badge_style", label: "Badge style (overrides the card style)", selector: { select: { mode: "dropdown", options: [{ value: "", label: "Card default" }, ...opt(BADGE_STYLES)] } } },
@@ -2475,3 +2538,4 @@ if (!window.customCards.some((c) => c.type === "launcher-card")) window.customCa
 });
 
 console.info(`%c LAUNCHER-CARD %c v${CARD_VERSION} `, "color:#fff;background:#4facfe;font-weight:700", "color:#4facfe;background:#222");
+})();
