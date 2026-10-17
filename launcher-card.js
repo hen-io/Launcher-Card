@@ -1,5 +1,5 @@
 (() => { "use strict";
-const CARD_VERSION = "0.2.21";
+const CARD_VERSION = "0.2.22";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -1239,9 +1239,7 @@ class LauncherCard extends HTMLElement {
           ${c.name_shadow ? `text-shadow:0 1px ${Math.max(0, num(c.name_shadow_blur, 3))}px ${css(c.name_shadow_color) || "rgba(0,0,0,.65)"};` : ""}}
         .track,.t{display:inline-block;white-space:nowrap}
         .track{max-width:100%}
-        .edge-l .name{width:calc(100% + 8px);margin:0 -8px 0 0}
-        .edge-r .name{width:calc(100% + 8px);margin:0 0 0 -8px}
-        .edge-l.edge-r .name{width:100%;margin:0}`);
+        .edge-l .name,.edge-r .name{width:100%;margin:0}`);
       if (overflow === "wrap") {
         add(`.track,.t{display:block;white-space:normal}
           .t{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}`);
