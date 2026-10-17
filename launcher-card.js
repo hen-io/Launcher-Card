@@ -1,5 +1,5 @@
 (() => { "use strict";
-const CARD_VERSION = "0.3.0";
+const CARD_VERSION = "0.3.1";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -44,18 +44,26 @@ const LEGACY_STYLES = {
 };
 const styleName = (n, fallback = "gradient") => (BADGE_STYLES[n] ? n : LEGACY_STYLES[n] || fallback);
 
-const ICON_SHADOWS = {
-  none: "none",
-  soft: "drop-shadow(0 1px 2px rgba(0,0,0,.25))",
-  medium: "drop-shadow(0 2px 3px rgba(0,0,0,.4))",
-  strong: "drop-shadow(0 3px 5px rgba(0,0,0,.55)) drop-shadow(0 0 2px rgba(0,0,0,.35))",
+const ICON_SHADOW_PRESETS = {
+  none: null,
+  soft: { y: 1, blur: 2, opacity: 0.3 },
+  medium: { y: 2, blur: 3, opacity: 0.45 },
+  strong: { y: 3, blur: 5, opacity: 0.6 },
 };
-const ICON_SHADOWS_3D = {
-  none: "none",
-  soft: "drop-shadow(0 -.5px 0 rgba(var(--hi),.45)) drop-shadow(0 1.5px 1.5px rgba(var(--dp),.45))",
-  medium: "drop-shadow(0 -.5px 0 rgba(var(--hi),.5)) drop-shadow(0 2px 2.5px rgba(var(--dp),.55))",
-  strong: "drop-shadow(0 -1px 0 rgba(var(--hi),.55)) drop-shadow(0 3px 4px rgba(var(--dp),.65))",
-};
+
+function iconShadowFilters(c) {
+  const preset = ICON_SHADOW_PRESETS[c.icon_shadow] === undefined ? ICON_SHADOW_PRESETS.soft : ICON_SHADOW_PRESETS[c.icon_shadow];
+  if (!preset) return ["none", "none"];
+  const x = num(c.icon_shadow_x, 0);
+  const y = num(c.icon_shadow_y, preset.y);
+  const blur = Math.max(0, num(c.icon_shadow_blur, preset.blur));
+  const op = clamp(num(c.icon_shadow_opacity, preset.opacity * 100) / 100);
+  const custom = css(c.icon_shadow_color);
+  const shadow = (rgb, extra) => `drop-shadow(${x}px ${y}px ${blur}px ${custom || `rgba(${rgb},${clamp(op + extra).toFixed(2)})`})`;
+  const flat = shadow("0,0,0", 0);
+  const lip = c.icon_shadow_highlight === false ? "" : `drop-shadow(0 -${y >= 3 ? 1 : 0.5}px 0 rgba(var(--hi),${clamp(0.3 + op * 0.4).toFixed(2)})) `;
+  return [flat, lip + shadow("var(--dp)", 0.15)];
+}
 
 const DEFAULTS = {
   columns: "auto",
@@ -67,6 +75,8 @@ const DEFAULTS = {
   badge_style: "gradient",
   gradient_angle: 145,
   icon_shadow: "soft",
+  icon_shadow_highlight: true,
+  shine_strength: 25,
   shine: true,
   shadow: true,
   show_names: true,
@@ -1032,6 +1042,7 @@ class LauncherCard extends HTMLElement {
     const apps = c.apps;
     const cols = this._fixedCols();
     const pad = m.pad;
+    const [ishFlat, ish3d] = iconShadowFilters(c);
     const sh = (v) => (c.shadow ? v : "0 0 #0000");
     const base = styleName(c.badge_style);
     const used = new Set([base]);
@@ -1217,7 +1228,7 @@ class LauncherCard extends HTMLElement {
         -webkit-tap-highlight-color:transparent;outline:none;touch-action:manipulation}
       .wrap{position:relative;flex:none}
       .badge{--ic:#fff;--grad:${grad};
-        --ish:${ICON_SHADOWS[c.icon_shadow] || ICON_SHADOWS.soft};--ish3d:${ICON_SHADOWS_3D[c.icon_shadow] || ICON_SHADOWS_3D.soft};
+        --ish:${ishFlat};--ish3d:${ish3d};
         position:relative;width:${m.badge}px;height:${m.badge}px;border-radius:${radius};
         display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box;
         ${border ? `border:${border}px solid ${css(c.badge_border_color) || "rgba(255,255,255,.35)"};` : ""}
@@ -1225,9 +1236,11 @@ class LauncherCard extends HTMLElement {
       .app:focus-visible .badge{outline:2px solid var(--primary-color);outline-offset:3px}`);
 
     for (const name of used) add(STYLE[name]);
-    if (c.shine && ["gradient", "flat"].some((n) => used.has(n))) {
-      add(`.s-gradient::after,.s-flat::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;
-        background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,0) 50%)}`);
+    if (c.shine) {
+      const a = clamp(num(c.shine_strength, 25) / 100).toFixed(2);
+      add(`.badge::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;
+          background:linear-gradient(180deg,rgba(255,255,255,${a}) 0%,rgba(255,255,255,${(a * 0.35).toFixed(2)}) 45%,rgba(255,255,255,0) 60%)}
+        .s-minimal::after{content:none}`);
     }
 
     add(this._animStyles(T));
@@ -2021,8 +2034,8 @@ const GENERAL_SCHEMAS = {
       { name: "gradient_type", label: "Gradient type (all two-colour styles)", selector: { select: { mode: "dropdown", options: opt({ linear: "Linear", radial: "Radial", conic: "Conic", diamond: "Mirrored" }) } } },
       { name: "gradient_angle", label: "Gradient angle", selector: { number: { min: 0, max: 360, mode: "box" } } },
       { name: "badge_border", label: "Border width (px)", selector: { number: { min: 0, max: 8, mode: "box" } } },
-      { name: "icon_shadow", label: "Icon shadow", selector: { select: { mode: "dropdown", options: opt({ none: "None", soft: "Soft", medium: "Medium", strong: "Strong" }) } } },
       { name: "shine", label: "Glossy highlight", selector: { boolean: {} } },
+      { name: "shine_strength", label: "Highlight strength (%)", selector: { number: { min: 0, max: 100, step: 5, mode: "slider" } } },
       { name: "shadow", label: "Badge shadow", selector: { boolean: {} } }
     ),
   ],
@@ -2053,6 +2066,16 @@ const GENERAL_SCHEMAS = {
       { name: "haptic", label: "Haptic feedback", selector: { boolean: {} } },
       { name: "active_indicator", label: "Active entity dot", selector: { boolean: {} } },
       { name: "dim_unavailable", label: "Dim unavailable", selector: { boolean: {} } }
+    ),
+  ],
+  iconshadow: [
+    grid(
+      { name: "icon_shadow", label: "Shadow", selector: { select: { mode: "dropdown", options: opt({ none: "None", soft: "Soft", medium: "Medium", strong: "Strong" }) } } },
+      { name: "icon_shadow_highlight", label: "Light edge above icon (3D styles)", selector: { boolean: {} } },
+      { name: "icon_shadow_x", label: "Horizontal offset (px, empty = preset)", selector: { number: { min: -10, max: 10, step: 0.5, mode: "box" } } },
+      { name: "icon_shadow_y", label: "Vertical offset (px, empty = preset)", selector: { number: { min: -10, max: 10, step: 0.5, mode: "box" } } },
+      { name: "icon_shadow_blur", label: "Blur (px, empty = preset)", selector: { number: { min: 0, max: 20, step: 0.5, mode: "box" } } },
+      { name: "icon_shadow_opacity", label: "Opacity (%, empty = preset)", selector: { number: { min: 0, max: 100, step: 5, mode: "box" } } }
     ),
   ],
   features: [
@@ -2353,6 +2376,7 @@ class LauncherCardEditor extends HTMLElement {
       const f = this._form(schema, (v, keys) => this._onGeneral(v, keys));
       this._generalForms.push(f);
       if (id === "features") panels.effects.appendChild(this._section("Features (turn off what you don't use for better performance)", f));
+      else if (id === "iconshadow") panels.badges.appendChild(this._section("Icon shadow", f, this._globalPicker("icon_shadow_color", "Shadow color (empty = automatic)", "auto")));
       else panels[id].appendChild(f);
     }
     panels.badges.appendChild(
