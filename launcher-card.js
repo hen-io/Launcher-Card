@@ -1,5 +1,5 @@
 (() => { "use strict";
-const CARD_VERSION = "0.2.22";
+const CARD_VERSION = "0.3.0";
 
 const PRESETS = {
   blue: ["#4facfe", "#1d5fe0"],
@@ -18,20 +18,24 @@ const PRESET_NAMES = Object.keys(PRESETS);
 const BADGE_STYLES = {
   gradient: "Gradient",
   flat: "Flat",
-  glossy: "Glossy (3D)",
-  depth: "Depth (3D slab)",
-  pillow: "Pillow (3D inflated)",
-  sphere: "Sphere (3D, round)",
-  key: "Key (3D raised cap)",
-  stack: "Stack (3D layered)",
-  inset: "Inset (3D recessed)",
-  glass: "Frosted glass",
+  glossy: "Glossy",
+  depth: "Depth",
+  pillow: "Pillow",
+  sphere: "Sphere",
+  dome: "Dome",
+  emboss: "Emboss",
+  gummy: "Gummy",
+  plastic: "Plastic",
+  key: "Key",
+  stack: "Stack",
+  inset: "Inset",
+  glass: "Glass",
   liquid: "Liquid glass",
-  liquid_tint: "Liquid glass (tinted)",
+  liquid_tint: "Liquid tint",
   tinted: "Tinted",
   light: "Light",
   dark: "Dark",
-  minimal: "Minimal (icon only)",
+  minimal: "Minimal",
 };
 
 const LEGACY_STYLES = {
@@ -1066,75 +1070,96 @@ class LauncherCard extends HTMLElement {
     const scaleT = press === "spring" ? ".4s cubic-bezier(.2,1.7,.4,1)" : ".18s cubic-bezier(.3,.7,.4,1.4)";
     const T = `translate .25s cubic-bezier(.3,.7,.4,1.4), scale ${scaleT}, rotate .25s ease, filter .2s ease, opacity .2s ease`;
 
+    const D3 = "--ish:var(--ish3d);";
     const STYLE = {
       gradient: `.s-gradient{background:var(--grad);
-        box-shadow:inset 0 1px 0 rgba(var(--hi),.5),inset 0 -1px 0 rgba(var(--lo),.25),${sh("0 1px 2px rgba(var(--dp),.25),0 7px 12px -6px rgba(var(--dp),.55)")}}`,
-      flat: `.s-flat{background:var(--c1);box-shadow:inset 0 0 0 1px rgba(var(--lo),.18),${sh("0 1px 2px rgba(var(--dp),.3)")}}`,
+        box-shadow:inset 0 2px 3px -1px rgba(var(--hi),.35),inset 0 -2px 3px -1px rgba(var(--lo),.3),
+                   ${sh("0 1px 2px rgba(var(--dp),.22),0 6px 12px -6px rgba(var(--dp),.5)")}}`,
+      flat: `.s-flat{background:var(--c1);box-shadow:${sh("0 1px 2px rgba(var(--dp),.25),0 4px 8px -5px rgba(var(--dp),.35)")}}`,
 
-      glossy: `.s-glossy{--ish:var(--ish3d);background:var(--grad);
-        box-shadow:inset 0 1px 0 rgba(var(--hi),.9),inset 0 -3px 5px -2px rgba(var(--lo),.75),inset 0 0 0 1px rgba(var(--lo),.35),
-                   ${sh("0 1px 1px rgba(var(--dp),.4),0 5px 8px -3px rgba(var(--dp),.45),0 13px 16px -9px rgba(var(--dp),.55)")}}
-        .s-glossy::before{content:"";position:absolute;left:0;right:0;top:0;height:52%;pointer-events:none;
-        border-radius:0 0 50% 50%/0 0 24% 24%;background:linear-gradient(180deg,rgba(255,255,255,.62),rgba(255,255,255,.1))}`,
+      glossy: `.s-glossy{${D3}background:var(--grad);
+        box-shadow:inset 0 3px 4px -2px rgba(var(--hi),.5),inset 0 -4px 6px -2px rgba(var(--lo),.6),
+                   ${sh("0 1px 2px rgba(var(--dp),.35),0 5px 8px -3px rgba(var(--dp),.4),0 13px 16px -9px rgba(var(--dp),.5)")}}
+        .s-glossy::before{content:"";position:absolute;left:5%;right:5%;top:3%;height:48%;pointer-events:none;
+        border-radius:40% 40% 50% 50%/30% 30% 60% 60%;filter:blur(.4px);
+        background:linear-gradient(180deg,rgba(255,255,255,.5),rgba(255,255,255,.06))}`,
 
-      depth: `.s-depth{--ish:var(--ish3d);background:var(--grad);
-        box-shadow:inset 0 1px 0 rgba(var(--hi),.85),inset 0 -2px 2px rgba(var(--lo),.5),inset 0 0 0 1px rgba(var(--lo),.22),
-                   ${sh("0 1px 1px rgba(var(--dp),.35),0 4px 7px -2px rgba(var(--dp),.4),0 12px 16px -9px rgba(var(--dp),.5)")}}`,
+      depth: `.s-depth{${D3}background:var(--grad);
+        box-shadow:inset 0 2px 3px -1px rgba(var(--hi),.55),inset 0 -3px 4px -1px rgba(var(--lo),.55),
+                   ${sh("0 1px 2px rgba(var(--dp),.3),0 4px 7px -2px rgba(var(--dp),.38),0 12px 16px -9px rgba(var(--dp),.5)")}}`,
 
-      pillow: `.s-pillow{--ish:var(--ish3d);background:radial-gradient(120% 110% at 30% 14%,rgb(var(--hi)) 0%,var(--c1) 30%,var(--c2) 88%);
-        box-shadow:inset 2px 3px 3px rgba(var(--hi),.9),inset -2px -8px 10px -3px rgba(var(--lo),.8),inset 0 0 0 1px rgba(var(--lo),.3),
-                   ${sh("0 2px 3px rgba(var(--dp),.35),0 11px 14px -6px rgba(var(--dp),.55)")}}
-        .s-pillow::before{content:"";position:absolute;left:14%;top:8%;width:40%;height:22%;border-radius:50%;pointer-events:none;
-        transform:rotate(-20deg);background:radial-gradient(ellipse,rgba(255,255,255,.95),rgba(255,255,255,0) 72%)}`,
+      pillow: `.s-pillow{${D3}background:radial-gradient(120% 110% at 30% 14%,rgb(var(--hi)) 0%,var(--c1) 30%,var(--c2) 88%);
+        box-shadow:inset 3px 4px 6px -2px rgba(var(--hi),.6),inset -3px -7px 10px -3px rgba(var(--lo),.75),
+                   ${sh("0 2px 3px rgba(var(--dp),.3),0 11px 14px -6px rgba(var(--dp),.5)")}}
+        .s-pillow::before{content:"";position:absolute;left:14%;top:9%;width:40%;height:22%;border-radius:50%;pointer-events:none;
+        transform:rotate(-20deg);filter:blur(1.5px);background:radial-gradient(ellipse,rgba(255,255,255,.85),rgba(255,255,255,0) 70%)}`,
 
-      sphere: `.s-sphere{--ish:var(--ish3d);border-radius:50%;
+      sphere: `.s-sphere{${D3}border-radius:50%;
         background:radial-gradient(circle at 34% 26%,rgb(var(--hi)) 0%,var(--c1) 24%,var(--c2) 66%,rgb(var(--lo)) 100%);
-        box-shadow:inset -3px -6px 10px rgba(var(--dp),.45),inset 2px 3px 4px rgba(var(--hi),.5),
-                   ${sh("0 3px 4px rgba(var(--dp),.3),0 12px 14px -6px rgba(var(--dp),.55)")}}
-        .s-sphere::before{content:"";position:absolute;left:18%;top:9%;width:36%;height:20%;border-radius:50%;pointer-events:none;
-        transform:rotate(-24deg);background:radial-gradient(ellipse,rgba(255,255,255,.9),rgba(255,255,255,0) 70%)}`,
+        box-shadow:inset -3px -6px 10px rgba(var(--dp),.4),inset 3px 4px 6px -2px rgba(var(--hi),.45),
+                   ${sh("0 3px 4px rgba(var(--dp),.28),0 12px 14px -6px rgba(var(--dp),.5)")}}
+        .s-sphere::before{content:"";position:absolute;left:18%;top:10%;width:36%;height:20%;border-radius:50%;pointer-events:none;
+        transform:rotate(-24deg);filter:blur(1.5px);background:radial-gradient(ellipse,rgba(255,255,255,.85),rgba(255,255,255,0) 70%)}`,
 
-      key: `.s-key{--ish:var(--ish3d);background:var(--grad);
-        transition:${T},box-shadow .12s ease;
-        box-shadow:inset 0 0 0 1.5px rgba(var(--hi),.4),inset 0 -3px 4px -1px rgba(var(--lo),.35),0 4px 0 rgb(var(--lo)),
-                   ${sh("0 11px 10px -3px rgba(var(--dp),.5)")}}`,
+      dome: `.s-dome{${D3}background:radial-gradient(130% 120% at 50% 0%,rgb(var(--hi)) 0%,var(--c1) 34%,var(--c2) 74%,rgb(var(--lo)) 100%);
+        box-shadow:inset 0 -6px 10px -4px rgba(var(--dp),.5),inset 0 4px 6px -3px rgba(var(--hi),.45),
+                   ${sh("0 2px 3px rgba(var(--dp),.28),0 10px 14px -6px rgba(var(--dp),.5)")}}
+        .s-dome::before{content:"";position:absolute;left:18%;right:18%;top:6%;height:30%;border-radius:50%;pointer-events:none;
+        filter:blur(1px);background:radial-gradient(ellipse at 50% 30%,rgba(255,255,255,.6),rgba(255,255,255,0) 72%)}`,
 
-      stack: `.s-stack{--ish:var(--ish3d);background:var(--grad);
-        box-shadow:inset 0 1px 0 rgba(var(--hi),.7),inset 0 0 0 1px rgba(var(--lo),.25),0 4px 0 -1px rgb(var(--mid)),0 9px 0 -3px rgb(var(--lo)),
-                   ${sh("0 15px 12px -9px rgba(var(--dp),.55)")}}`,
+      emboss: `.s-emboss{${D3}background:var(--grad);
+        box-shadow:inset 3px 3px 6px -2px rgba(var(--hi),.55),inset -3px -3px 6px -2px rgba(var(--lo),.6),
+                   ${sh("4px 6px 12px -4px rgba(var(--dp),.5),-2px -2px 6px -3px rgba(255,255,255,.18)")}}`,
 
-      inset: `.s-inset{--ic:var(--c2);--ish:var(--ish3d);
+      gummy: `.s-gummy{${D3}
+        background:radial-gradient(90% 70% at 50% 105%,rgba(var(--hi),.5),transparent 70%),
+                   linear-gradient(180deg,rgba(var(--t1),.94),rgba(var(--t2),.96));
+        box-shadow:inset 0 -4px 8px -2px rgba(var(--lo),.5),inset 0 4px 8px -3px rgba(var(--hi),.55),
+                   ${sh("0 2px 3px rgba(var(--dp),.25),0 8px 14px -6px rgba(var(--mid),.65)")}}
+        .s-gummy::before{content:"";position:absolute;left:16%;top:8%;width:34%;height:18%;border-radius:50%;pointer-events:none;
+        filter:blur(1px);background:radial-gradient(ellipse,rgba(255,255,255,.75),rgba(255,255,255,0) 70%)}`,
+
+      plastic: `.s-plastic{${D3}background:linear-gradient(180deg,rgba(var(--hi),.35) 0%,rgba(var(--hi),0) 40%),var(--grad);
+        box-shadow:inset 0 -3px 5px -2px rgba(var(--lo),.45),inset 0 2px 5px -2px rgba(var(--hi),.35),
+                   ${sh("0 1px 2px rgba(var(--dp),.3),0 6px 10px -5px rgba(var(--dp),.45)")}}`,
+
+      key: `.s-key{${D3}background:var(--grad);transition:${T},box-shadow .12s ease;
+        box-shadow:inset 0 2px 3px -1px rgba(var(--hi),.45),inset 0 -3px 4px -2px rgba(var(--lo),.4),
+                   0 3px 0 rgb(var(--lo)),0 4px 1px rgba(var(--lo),.8),${sh("0 11px 10px -3px rgba(var(--dp),.45)")}}`,
+
+      stack: `.s-stack{${D3}background:var(--grad);
+        box-shadow:inset 0 2px 3px -1px rgba(var(--hi),.5),inset 0 -2px 3px -1px rgba(var(--lo),.35),
+                   0 4px 0 -1px rgb(var(--mid)),0 9px 0 -3px rgb(var(--lo)),${sh("0 15px 12px -9px rgba(var(--dp),.5)")}}`,
+
+      inset: `.s-inset{--ic:var(--c2);${D3}
         background:linear-gradient(180deg,rgba(var(--lo),.3),rgba(var(--mid),.12)),var(--card-background-color,#fff);
-        box-shadow:inset 0 3px 7px rgba(var(--dp),.45),inset 0 0 0 1px rgba(var(--lo),.3),${sh("0 1px 0 rgba(255,255,255,.6)")}}`,
+        box-shadow:inset 0 3px 7px rgba(var(--dp),.42),inset 0 -1px 3px rgba(var(--hi),.15),${sh("0 1px 2px rgba(255,255,255,.18)")}}`,
 
       glass: `.s-glass{
-        background:linear-gradient(180deg,rgba(255,255,255,.3),rgba(255,255,255,0) 55%),
-                   ${g("rgba(var(--t1),.86)", "rgba(var(--t2),.8)")};
+        background:linear-gradient(180deg,rgba(255,255,255,.26),rgba(255,255,255,0) 55%),${g("rgba(var(--t1),.86)", "rgba(var(--t2),.8)")};
         backdrop-filter:blur(12px) saturate(170%);-webkit-backdrop-filter:blur(12px) saturate(170%);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.6),inset 0 0 0 1px rgba(255,255,255,.3),
+        box-shadow:inset 0 2px 4px -1px rgba(255,255,255,.4),inset 0 0 6px rgba(255,255,255,.12),
                    ${sh("0 1px 2px rgba(var(--dp),.2),0 8px 14px -7px rgba(var(--dp),.5)")}}`,
       liquid: `.s-liquid{
-        background:radial-gradient(120% 70% at 50% -12%,rgba(255,255,255,.5),rgba(255,255,255,0) 62%),
-                   radial-gradient(90% 60% at 50% 115%,rgba(var(--hi),.6) 0%,transparent 70%),
-                   ${g("rgba(var(--t1),.78)", "rgba(var(--t2),.7)")};
+        background:radial-gradient(120% 70% at 50% -12%,rgba(255,255,255,.45),rgba(255,255,255,0) 62%),
+                   radial-gradient(90% 60% at 50% 115%,rgba(var(--hi),.55) 0%,transparent 70%),${g("rgba(var(--t1),.78)", "rgba(var(--t2),.7)")};
         backdrop-filter:blur(10px) saturate(190%) brightness(1.1);-webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.1);
-        box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.75),inset -1px -1px 1px rgba(255,255,255,.35),inset 0 0 0 1px rgba(255,255,255,.18),
-                   inset 0 0 14px rgba(255,255,255,.18),${sh("0 10px 20px -10px rgba(var(--dp),.5),0 2px 4px -2px rgba(var(--dp),.25)")}}`,
+        box-shadow:inset 2px 2px 4px -1px rgba(255,255,255,.55),inset -2px -2px 4px -1px rgba(255,255,255,.2),inset 0 0 12px rgba(255,255,255,.15),
+                   ${sh("0 10px 20px -10px rgba(var(--dp),.5),0 2px 4px -2px rgba(var(--dp),.25)")}}`,
       liquid_tint: `.s-liquid_tint{
-        background:radial-gradient(120% 70% at 50% -12%,rgba(255,255,255,.42),rgba(255,255,255,0) 60%),
-                   radial-gradient(90% 60% at 60% 115%,rgba(var(--hi),.7) 0%,transparent 70%),
-                   ${g("rgba(var(--t1),.92)", "rgba(var(--t2),.86)")};
+        background:radial-gradient(120% 70% at 50% -12%,rgba(255,255,255,.38),rgba(255,255,255,0) 60%),
+                   radial-gradient(90% 60% at 60% 115%,rgba(var(--hi),.65) 0%,transparent 70%),${g("rgba(var(--t1),.92)", "rgba(var(--t2),.86)")};
         backdrop-filter:blur(10px) saturate(190%) brightness(1.08);-webkit-backdrop-filter:blur(10px) saturate(190%) brightness(1.08);
-        box-shadow:inset 1.5px 1.5px 1px rgba(255,255,255,.65),inset -1px -1px 1px rgba(255,255,255,.3),inset 0 0 14px rgba(255,255,255,.14),
+        box-shadow:inset 2px 2px 4px -1px rgba(255,255,255,.45),inset -2px -2px 4px -1px rgba(255,255,255,.18),inset 0 0 12px rgba(255,255,255,.12),
                    ${sh("0 10px 20px -10px rgba(var(--dp),.5),0 2px 4px -2px rgba(var(--dp),.25)")}}`,
       tinted: `.s-tinted{--ic:var(--c2);background:${g("var(--tint)", "var(--tint2)")};
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.7),inset 0 0 0 1px rgba(var(--mid),.22),
+        box-shadow:inset 0 2px 3px -1px rgba(255,255,255,.5),inset 0 -2px 3px -1px rgba(var(--mid),.15),
                    ${sh("0 1px 2px rgba(var(--dp),.15),0 6px 10px -6px rgba(var(--dp),.35)")}}`,
       light: `.s-light{background:linear-gradient(180deg,#fff,#eceef2);
-        box-shadow:inset 0 1px 0 #fff,inset 0 0 0 1px rgba(0,0,0,.06),${sh("0 1px 2px rgba(0,0,0,.12),0 6px 12px -6px rgba(var(--dp),.35)")}}
+        box-shadow:inset 0 2px 3px -1px #fff,inset 0 -2px 3px -1px rgba(0,0,0,.07),${sh("0 1px 2px rgba(0,0,0,.12),0 6px 12px -6px rgba(var(--dp),.35)")}}
         .s-light ha-icon{color:var(--app-ic,var(--main))}`,
       dark: `.s-dark{background:linear-gradient(180deg,#2d3037,#181a1f);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.07),${sh("0 7px 12px -6px rgba(0,0,0,.6)")}}
+        box-shadow:inset 0 2px 3px -1px rgba(255,255,255,.12),inset 0 -2px 3px -1px rgba(0,0,0,.3),${sh("0 7px 12px -6px rgba(0,0,0,.6)")}}
         .s-dark ha-icon{color:var(--app-ic,var(--main))}`,
       minimal: `.s-minimal{--ic:var(--c1);background:none;box-shadow:none;overflow:visible;border-color:transparent}
         .s-minimal ha-icon{--mdc-icon-size:${m.minimalIcon}px}`,
@@ -1202,7 +1227,7 @@ class LauncherCard extends HTMLElement {
     for (const name of used) add(STYLE[name]);
     if (c.shine && ["gradient", "flat"].some((n) => used.has(n))) {
       add(`.s-gradient::after,.s-flat::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;
-        background:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,0) 48%)}`);
+        background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,0) 50%)}`);
     }
 
     add(this._animStyles(T));
@@ -1291,7 +1316,7 @@ class LauncherCard extends HTMLElement {
     if (press) {
       out.push(press);
       out.push(`.app.pressed .s-key{translate:0 3px;scale:1;
-          box-shadow:inset 0 0 0 1.5px rgba(var(--hi),.4),0 1px 0 rgb(var(--lo))}
+          box-shadow:inset 0 2px 3px -1px rgba(var(--hi),.35),inset 0 -2px 3px -2px rgba(var(--lo),.35),0 1px 0 rgb(var(--lo))}
         .app.pressed .s-stack{translate:0 3px;scale:1}
         .app.pressed .s-inset{scale:.97}`);
     }
